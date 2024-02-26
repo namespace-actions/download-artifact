@@ -98,8 +98,8 @@ jobs:
 
     - name: Verify successful download
       run: |
-        fileA = "some/other/path/Artifact-A-${{ matrix.runs-on }}/file-A.txt"
-        fileB = "some/other/path/Artifact-B-${{ matrix.runs-on }}/file-B.txt"
+        fileA="some/other/path/Artifact-A-${{ matrix.runs-on }}/file-A.txt"
+        fileB="some/other/path/Artifact-B-${{ matrix.runs-on }}/file-B.txt"
 
         str="Lorem ipsum dolor sit amet"
         if [[ $(< $fileA) != "$str" ]]; then
@@ -121,8 +121,8 @@ jobs:
 
     - name: Verify successful download
       run: |
-        fileA = "single/directory/file-A.txt"
-        fileB = "single/directory/file-B.txt"
+        fileA="single/directory/file-A.txt"
+        fileB="single/directory/file-B.txt"
 
         str="Lorem ipsum dolor sit amet"
         if [[ $(< $fileA) != "$str" ]]; then

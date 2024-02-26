@@ -30,11 +30,12 @@ jobs:
 
     - run: |
         git submodule update --init actions-toolkit
-        cd actions-toolkit/packages/artifact
-        npm install 
 
     - name: Install dependencies
-      run: npm ci
+      run: |
+        npm ci
+        cd actions-toolkit/packages/artifact
+        npm install
 
     - name: Compile
       run: npm run build

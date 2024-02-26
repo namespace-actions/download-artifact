@@ -4,8 +4,8 @@
   "description": "Download an Actions Artifact from a workflow run",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "release": "ncc build src/download-artifact.ts && git add -f dist/",
+    "build": "(cd actions-toolkit/packages/artifact && tsc) && tsc",
+    "release": "npm run build && ncc build src/download-artifact.ts && git add -f dist/",
     "check-all": "concurrently \"npm:format-check\" \"npm:lint\" \"npm:build\"",
     "format": "prettier --write **/*.ts",
     "format-check": "prettier --check **/*.ts",
@@ -28,7 +28,7 @@
   },
   "homepage": "https://github.com/actions/download-artifact#readme",
   "dependencies": {
-    "@actions/artifact": "^2.1.1",
+    "@actions/artifact": "file:./actions-toolkit/packages/artifact",
     "@actions/core": "^1.10.0",
     "@actions/github": "^5.1.1",
     "minimatch": "^9.0.3"

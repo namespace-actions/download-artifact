@@ -29,9 +29,9 @@ jobs:
         cache: 'npm'
 
     - run: |
-      git submodule update --init actions-toolkit
-      cd actions-toolkit/packages/artifact
-      npm install 
+        git submodule update --init actions-toolkit
+        cd actions-toolkit/packages/artifact
+        npm install 
 
     - name: npm install
       run: npm install
@@ -122,7 +122,7 @@ jobs:
       run: |
         $fileA = "single/directory/file-A.txt"
         $fileB = "single/directory/file-B.txt"
-        
+
         str="Lorem ipsum dolor sit amet"
         if [[ $(< $fileA) != "$str" ]]; then
             exit 1

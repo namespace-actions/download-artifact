@@ -1,52 +1,17 @@
-# `@actions/download-artifact`
+# `namespace-actions/download-artifact`
 
-Download [Actions Artifacts](https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts) from your Workflow Runs. Internally powered by the [@actions/artifact](https://github.com/actions/toolkit/tree/main/packages/artifact) package.
+Namespace's version of Download [Actions Artifacts](https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts) compatible with the [upload-artifact](https://github.com/actions/upload-artifact).
 
-See also [upload-artifact](https://github.com/actions/upload-artifact).
+The artifacts are stored in Namespace internal storage. They will not be visible and billed in GitHub.
 
-- [`@actions/download-artifact`](#actionsdownload-artifact)
-  - [v4 - What's new](#v4---whats-new)
-    - [Improvements](#improvements)
-    - [Breaking Changes](#breaking-changes)
-  - [Usage](#usage)
-    - [Inputs](#inputs)
-    - [Outputs](#outputs)
-  - [Examples](#examples)
-    - [Download Single Artifact](#download-single-artifact)
-    - [Download All Artifacts](#download-all-artifacts)
-    - [Download multiple (filtered) Artifacts to the same directory](#download-multiple-filtered-artifacts-to-the-same-directory)
-    - [Download Artifacts from other Workflow Runs or Repositories](#download-artifacts-from-other-workflow-runs-or-repositories)
-  - [Limitations](#limitations)
-    - [Permission Loss](#permission-loss)
-
-
-## v4 - What's new
-
-> [!IMPORTANT]
-> download-artifact@v4+ is not currently supported on GHES yet. If you are on GHES, you must use [v3](https://github.com/actions/download-artifact/releases/tag/v3).
-
-The release of upload-artifact@v4 and download-artifact@v4 are major changes to the backend architecture of Artifacts. They have numerous performance and behavioral improvements.
-
-For more information, see the [`@actions/artifact`](https://github.com/actions/toolkit/tree/main/packages/artifact) documentation.
-
-### Improvements
-
-1. Downloads are significantly faster, upwards of 90% improvement in worst case scenarios.
-2. Artifacts can be downloaded from other workflow runs and repositories when supplied with a PAT.
-
-### Breaking Changes
-
-1. On self hosted runners, additional [firewall rules](https://github.com/actions/toolkit/tree/main/packages/artifact#breaking-changes) may be required.
-2. Downloading artifacts that were created from `action/upload-artifact@v3` and below are not supported.
-
-For assistance with breaking changes, see [MIGRATION.md](docs/MIGRATION.md).
+Upload artifacts with [upload-artifact](https://github.com/namespace-actions/upload-artifact).
 
 ## Usage
 
 ### Inputs
 
 ```yaml
-- uses: actions/download-artifact@v4
+- uses: namespace-actions/download-artifact@v0
   with:
     # Name of the artifact to download.
     # If unspecified, all artifacts for the run are downloaded.
@@ -98,7 +63,7 @@ Download to current working directory (`$GITHUB_WORKSPACE`):
 
 ```yaml
 steps:
-- uses: actions/download-artifact@v4
+- uses: namespace-actions/download-artifact@v0
   with:
     name: my-artifact
 - name: Display structure of downloaded files
@@ -109,14 +74,13 @@ Download to a specific directory (also supports `~` expansion):
 
 ```yaml
 steps:
-- uses: actions/download-artifact@v4
+- uses: namespace-actions/download-artifact@v0
   with:
     name: my-artifact
     path: your/destination/dir
 - name: Display structure of downloaded files
   run: ls -R your/destination/dir
 ```
-
 
 ### Download All Artifacts
 
@@ -136,7 +100,7 @@ Download all artifacts to the current working directory:
 
 ```yaml
 steps:
-- uses: actions/download-artifact@v4
+- uses: namespace-actions/download-artifact@v0
 - name: Display structure of downloaded files
   run: ls -R
 ```
@@ -145,7 +109,7 @@ Download all artifacts to a specific directory:
 
 ```yaml
 steps:
-- uses: actions/download-artifact@v4
+- uses: namespace-actions/download-artifact@v0
   with:
     path: path/to/artifacts
 - name: Display structure of downloaded files
@@ -156,7 +120,7 @@ To download them to the _same_ directory:
 
 ```yaml
 steps:
-- uses: actions/download-artifact@v4
+- uses: namespace-actions/download-artifact@v0
   with:
     path: path/to/artifacts
     merge-multiple: true
@@ -196,7 +160,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Download All Artifacts
-      uses: actions/download-artifact@v4
+      uses: namespace-actions/download-artifact@v0
       with:
         path: my-artifact
         pattern: my-artifact-*
@@ -219,7 +183,7 @@ It may be useful to download Artifacts from other workflow runs, or even other r
 
 ```yaml
 steps:
-- uses: actions/download-artifact@v4
+- uses: namespace-actions/download-artifact@v0
   with:
     name: my-other-artifact
     github-token: ${{ secrets.GH_PAT }} # token with actions:read permissions on target repo

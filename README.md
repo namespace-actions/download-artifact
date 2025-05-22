@@ -11,7 +11,7 @@ Upload artifacts with [upload-artifact](https://github.com/namespace-actions/upl
 ### Inputs
 
 ```yaml
-- uses: namespace-actions/download-artifact@v0
+- uses: namespace-actions/download-artifact@v1
   with:
     # Name of the artifact to download.
     # If unspecified, all artifacts for the run are downloaded.
@@ -63,7 +63,7 @@ Download to current working directory (`$GITHUB_WORKSPACE`):
 
 ```yaml
 steps:
-- uses: namespace-actions/download-artifact@v0
+- uses: namespace-actions/download-artifact@v1
   with:
     name: my-artifact
 - name: Display structure of downloaded files
@@ -74,7 +74,7 @@ Download to a specific directory (also supports `~` expansion):
 
 ```yaml
 steps:
-- uses: namespace-actions/download-artifact@v0
+- uses: namespace-actions/download-artifact@v1
   with:
     name: my-artifact
     path: your/destination/dir
@@ -100,7 +100,7 @@ Download all artifacts to the current working directory:
 
 ```yaml
 steps:
-- uses: namespace-actions/download-artifact@v0
+- uses: namespace-actions/download-artifact@v1
 - name: Display structure of downloaded files
   run: ls -R
 ```
@@ -109,7 +109,7 @@ Download all artifacts to a specific directory:
 
 ```yaml
 steps:
-- uses: namespace-actions/download-artifact@v0
+- uses: namespace-actions/download-artifact@v1
   with:
     path: path/to/artifacts
 - name: Display structure of downloaded files
@@ -120,7 +120,7 @@ To download them to the _same_ directory:
 
 ```yaml
 steps:
-- uses: namespace-actions/download-artifact@v0
+- uses: namespace-actions/download-artifact@v1
   with:
     path: path/to/artifacts
     merge-multiple: true
@@ -160,7 +160,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Download All Artifacts
-      uses: namespace-actions/download-artifact@v0
+      uses: namespace-actions/download-artifact@v1
       with:
         path: my-artifact
         pattern: my-artifact-*
@@ -183,7 +183,7 @@ It may be useful to download Artifacts from other workflow runs, or even other r
 
 ```yaml
 steps:
-- uses: namespace-actions/download-artifact@v0
+- uses: namespace-actions/download-artifact@v1
   with:
     name: my-other-artifact
     github-token: ${{ secrets.GH_PAT }} # token with actions:read permissions on target repo

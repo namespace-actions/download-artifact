@@ -1,44 +1,6 @@
 /******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 7487:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-
-
-Object.defineProperty(exports, "__esModule", ({ value: true }));
-
-const VERSION = "1.0.4";
-
-/**
- * @param octokit Octokit instance
- * @param options Options passed to Octokit constructor
- */
-
-function requestLog(octokit) {
-  octokit.hook.wrap("request", (request, options) => {
-    octokit.log.debug("request", options);
-    const start = Date.now();
-    const requestOptions = octokit.request.endpoint.parse(options);
-    const path = requestOptions.url.replace(options.baseUrl, "");
-    return request(options).then(response => {
-      octokit.log.info(`${requestOptions.method} ${path} - ${response.status} in ${Date.now() - start}ms`);
-      return response;
-    }).catch(error => {
-      octokit.log.info(`${requestOptions.method} ${path} - ${error.status} in ${Date.now() - start}ms`);
-      throw error;
-    });
-  });
-}
-requestLog.VERSION = VERSION;
-
-exports.requestLog = requestLog;
-//# sourceMappingURL=index.js.map
-
-
-/***/ }),
-
 /***/ 17968:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -2289,7 +2251,7 @@ const github_1 = __nccwpck_require__(95438);
 const user_agent_1 = __nccwpck_require__(2950);
 const retry_options_1 = __nccwpck_require__(5652);
 const utils_1 = __nccwpck_require__(73030);
-const plugin_request_log_1 = __nccwpck_require__(7487);
+const plugin_request_log_1 = __nccwpck_require__(68883);
 const plugin_retry_1 = __nccwpck_require__(86298);
 const artifact_twirp_client_1 = __nccwpck_require__(20615);
 const util_1 = __nccwpck_require__(72812);
@@ -2401,12 +2363,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.downloadArtifactInternal = exports.downloadArtifactPublic = exports.streamExtractExternal = void 0;
+exports.downloadArtifactInternal = exports.downloadArtifactPublic = exports.streamExtractExternal = exports.streamExtract = void 0;
 const promises_1 = __importDefault(__nccwpck_require__(73292));
 const github = __importStar(__nccwpck_require__(95438));
 const core = __importStar(__nccwpck_require__(42186));
 const httpClient = __importStar(__nccwpck_require__(96255));
 const unzip_stream_1 = __importDefault(__nccwpck_require__(69340));
+const range_extract_1 = __nccwpck_require__(63764);
 const user_agent_1 = __nccwpck_require__(2950);
 const config_1 = __nccwpck_require__(25597);
 const artifact_twirp_client_1 = __nccwpck_require__(20615);
@@ -2443,6 +2406,9 @@ function streamExtract(url, directory) {
                 return;
             }
             catch (error) {
+                // The stored bytes are wrong. Another attempt downloads them again.
+                if (error instanceof range_extract_1.ArtifactIntegrityError)
+                    throw error;
                 retryCount++;
                 core.error(`Failed to download artifact after ${retryCount} retries due to ${error.message}. Retrying in 5 seconds...`);
                 // wait 5 seconds before retrying
@@ -2452,8 +2418,20 @@ function streamExtract(url, directory) {
         throw new Error(`Artifact download failed after ${retryCount} retries.`);
     });
 }
-function streamExtractExternal(url, directory) {
+exports.streamExtract = streamExtract;
+function streamExtractExternal(url, directory, rangeOptions) {
     return __awaiter(this, void 0, void 0, function* () {
+        try {
+            if (yield (0, range_extract_1.tryRangeExtract)(url, directory, rangeOptions)) {
+                return;
+            }
+        }
+        catch (error) {
+            // unzip-stream does not check CRC-32, so it would write the same bytes.
+            if (error instanceof range_extract_1.ArtifactIntegrityError)
+                throw error;
+            core.warning(`Parallel range download failed, downloading as one stream instead: ${error.message}`);
+        }
         const client = new httpClient.HttpClient((0, user_agent_1.getUserAgentString)());
         const response = yield client.get(url);
         if (response.message.statusCode !== 200) {
@@ -2575,6 +2553,645 @@ function resolveOrCreateDirectory(downloadPath = (0, config_1.getGitHubWorkspace
 
 /***/ }),
 
+/***/ 63764:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __await = (this && this.__await) || function (v) { return this instanceof __await ? (this.v = v, this) : new __await(v); }
+var __asyncGenerator = (this && this.__asyncGenerator) || function (thisArg, _arguments, generator) {
+    if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+    var g = generator.apply(thisArg, _arguments || []), i, q = [];
+    return i = {}, verb("next"), verb("throw"), verb("return", awaitReturn), i[Symbol.asyncIterator] = function () { return this; }, i;
+    function awaitReturn(f) { return function (v) { return Promise.resolve(v).then(f, reject); }; }
+    function verb(n, f) { if (g[n]) { i[n] = function (v) { return new Promise(function (a, b) { q.push([n, v, a, b]) > 1 || resume(n, v); }); }; if (f) i[n] = f(i[n]); } }
+    function resume(n, v) { try { step(g[n](v)); } catch (e) { settle(q[0][3], e); } }
+    function step(r) { r.value instanceof __await ? Promise.resolve(r.value.v).then(fulfill, reject) : settle(q[0][2], r); }
+    function fulfill(value) { resume("next", value); }
+    function reject(value) { resume("throw", value); }
+    function settle(f, v) { if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]); }
+};
+var __asyncValues = (this && this.__asyncValues) || function (o) {
+    if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+    var m = o[Symbol.asyncIterator], i;
+    return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function () { return this; }, i);
+    function verb(n) { i[n] = o[n] && function (v) { return new Promise(function (resolve, reject) { v = o[n](v), settle(resolve, reject, v.done, v.value); }); }; }
+    function settle(resolve, reject, d, v) { Promise.resolve(v).then(function(v) { resolve({ value: v, done: d }); }, reject); }
+};
+var __asyncDelegator = (this && this.__asyncDelegator) || function (o) {
+    var i, p;
+    return i = {}, verb("next"), verb("throw", function (e) { throw e; }), verb("return"), i[Symbol.iterator] = function () { return this; }, i;
+    function verb(n, f) { i[n] = o[n] ? function (v) { return (p = !p) ? { value: __await(o[n](v)), done: false } : f ? f(v) : v; } : f; }
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.tryRangeExtract = exports.crc32Combine = exports.redirectTarget = exports.resolveSafePath = exports.parseContentRange = exports.ArtifactIntegrityError = exports.DEFAULT_IDLE_TIMEOUT_MS = exports.DEFAULT_MAX_ENTRIES = exports.DEFAULT_MIN_ARCHIVE_SIZE = exports.DEFAULT_WRITE_BUFFER_SIZE = exports.DEFAULT_CHUNK_SIZE = exports.DEFAULT_CONCURRENCY = void 0;
+const fs = __importStar(__nccwpck_require__(57147));
+const path = __importStar(__nccwpck_require__(71017));
+const stream_1 = __nccwpck_require__(12781);
+const promises_1 = __nccwpck_require__(74845);
+const zlib = __importStar(__nccwpck_require__(59796));
+const core = __importStar(__nccwpck_require__(42186));
+const yauzl = __importStar(__nccwpck_require__(78781));
+const user_agent_1 = __nccwpck_require__(2950);
+// yauzl looks for the end of central directory record, its comment and the
+// ZIP64 locator in the last 22 + 0xffff + 20 bytes. Probing exactly that much
+// serves its first read from memory.
+const TAIL_PROBE_BYTES = 22 + 0xffff + 20;
+const MAX_REDIRECTS = 10;
+const REDIRECT_STATUSES = [301, 302, 303, 307, 308];
+const MAX_SLICE_ATTEMPTS = 3;
+exports.DEFAULT_CONCURRENCY = 8;
+exports.DEFAULT_CHUNK_SIZE = 16 * 1024 * 1024; // 16 MiB
+exports.DEFAULT_WRITE_BUFFER_SIZE = 2 * 1024 * 1024; // 2 MiB per worker
+exports.DEFAULT_MIN_ARCHIVE_SIZE = 16 * 1024 * 1024; // 16 MiB
+// Each entry costs serial requests for its central directory record, local
+// header and data. Above a few dozen entries one stream is faster.
+exports.DEFAULT_MAX_ENTRIES = 64;
+exports.DEFAULT_IDLE_TIMEOUT_MS = 30 * 1000;
+// The downloaded bytes do not match the archive's own CRC-32. Streaming the
+// same object again would write the same bytes without checking them.
+class ArtifactIntegrityError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'ArtifactIntegrityError';
+    }
+}
+exports.ArtifactIntegrityError = ArtifactIntegrityError;
+// Node 20.15 and 22.2 added zlib.crc32. @types/node here predates it.
+const crc32 = zlib.crc32;
+function parseContentRange(header) {
+    if (!header)
+        return null;
+    const m = /^bytes\s+(\d+)-(\d+)\/(\d+)$/i.exec(header.trim());
+    if (!m)
+        return null;
+    const start = Number(m[1]);
+    const end = Number(m[2]);
+    const total = Number(m[3]);
+    if (!Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(end) ||
+        !Number.isSafeInteger(total) ||
+        end < start ||
+        end >= total) {
+        return null;
+    }
+    return { start, end, total };
+}
+exports.parseContentRange = parseContentRange;
+function resolveSafePath(destDir, entryName) {
+    const root = path.resolve(destDir);
+    const normalized = entryName.replace(/\\/g, '/');
+    if (normalized.startsWith('/') || normalized.split('/').includes('..')) {
+        throw new Error(`Unsafe zip entry path: ${entryName}`);
+    }
+    const destPath = path.resolve(root, normalized);
+    const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+    if (destPath !== root && !destPath.startsWith(prefix)) {
+        throw new Error(`Unsafe zip entry path: ${entryName}`);
+    }
+    return destPath;
+}
+exports.resolveSafePath = resolveSafePath;
+// The URL a redirect leads to, or null when it would leave HTTPS.
+function redirectTarget(from, location) {
+    const next = new URL(location, from);
+    if (new URL(from).protocol === 'https:' && next.protocol !== 'https:') {
+        return null;
+    }
+    return next.href;
+}
+exports.redirectTarget = redirectTarget;
+// CRC-32 of A || B from crc(A), crc(B) and len(B), as zlib's crc32_combine.
+const CRC_POLY = 0xedb88320;
+function multModP(a, b) {
+    let m = 0x80000000;
+    let p = 0;
+    for (;;) {
+        if (a & m) {
+            p ^= b;
+            if ((a & (m - 1)) === 0)
+                break;
+        }
+        m = m >>> 1;
+        b = b & 1 ? (b >>> 1) ^ CRC_POLY : b >>> 1;
+    }
+    return p >>> 0;
+}
+const X2N_TABLE = (() => {
+    const table = [];
+    let p = 1 << 30; // x^1
+    table.push(p);
+    for (let n = 1; n < 32; n++) {
+        p = multModP(p, p);
+        table.push(p);
+    }
+    return table;
+})();
+function crc32Combine(crc1, crc2, len2) {
+    // x^(8 * len2) mod P
+    let p = 0x80000000; // x^0
+    let k = 3;
+    for (let n = len2; n > 0; n = Math.floor(n / 2), k++) {
+        if (n % 2)
+            p = multModP(X2N_TABLE[k & 31], p);
+    }
+    return (multModP(p, crc1) ^ crc2) >>> 0;
+}
+exports.crc32Combine = crc32Combine;
+// True when unzip-stream would write this entry to the same path. It maps
+// CP437 differently, so only ASCII or UTF-8-flagged names without a Unicode
+// Path field (0x7075) decode the same. It also rewrites every segment of
+// two or more dots to a single dot.
+function namedLikeStreaming(entry) {
+    const utf8 = (entry.generalPurposeBitFlag & 0x800) !== 0;
+    const ascii = entry.fileNameRaw.every(b => b < 0x80);
+    return ((utf8 || ascii) &&
+        !entry.extraFields.some(f => f.id === 0x7075) &&
+        !entry.fileName.split('/').some(segment => /^\.{2,}$/.test(segment)));
+}
+function hasProxyEnv(url) {
+    const proxy = url.startsWith('https:')
+        ? process.env['HTTPS_PROXY'] || process.env['https_proxy']
+        : process.env['HTTP_PROXY'] || process.env['http_proxy'];
+    return Boolean(proxy && proxy.trim().length > 0);
+}
+// Node runs a timer of 2^31 ms or more after 1 ms.
+const MAX_TIMER_MS = Math.pow(2, 31) - 1;
+function positive(value, fallback) {
+    return value !== undefined && Number.isFinite(value) && value >= 1
+        ? Math.floor(value)
+        : fallback;
+}
+// An abort signal that also fires when no data arrives for idleMs. The
+// clock runs only while waiting on the network, so time the consumer
+// spends writing does not count against it. touch() and pause() only set
+// fields: one timer re-arms itself about once per idleMs instead of
+// once per chunk.
+class IdleAbort {
+    constructor(idleMs, what, parent) {
+        this.idleMs = idleMs;
+        this.what = what;
+        this.parent = parent;
+        this.controller = new AbortController();
+        this.last = Date.now();
+        this.paused = false;
+        this.onParentAbort = () => { var _a; return this.controller.abort((_a = this.parent) === null || _a === void 0 ? void 0 : _a.reason); };
+        this.check = () => {
+            const idle = this.paused ? 0 : Date.now() - this.last;
+            if (idle >= this.idleMs) {
+                this.controller.abort(new Error(`No data for ${this.idleMs} ms on ${this.what}`));
+                return;
+            }
+            this.timer = setTimeout(this.check, this.idleMs - idle);
+        };
+        if (parent === null || parent === void 0 ? void 0 : parent.aborted)
+            this.controller.abort(parent.reason);
+        parent === null || parent === void 0 ? void 0 : parent.addEventListener('abort', this.onParentAbort, { once: true });
+        this.timer = setTimeout(this.check, idleMs);
+    }
+    get signal() {
+        return this.controller.signal;
+    }
+    touch() {
+        this.last = Date.now();
+        this.paused = false;
+    }
+    pause() {
+        this.paused = true;
+    }
+    dispose() {
+        var _a;
+        clearTimeout(this.timer);
+        (_a = this.parent) === null || _a === void 0 ? void 0 : _a.removeEventListener('abort', this.onParentAbort);
+    }
+}
+// GET with a Range header. It follows redirects itself so that a downgrade
+// from HTTPS is refused before anything is sent, and returns the URL it
+// ended at. Errors name the range, never the URL: it carries a signature.
+function fetchRange(url, range, idle) {
+    var _a;
+    return __awaiter(this, void 0, void 0, function* () {
+        let current = url;
+        for (let hops = 0;; hops++) {
+            idle.touch();
+            const res = yield fetch(current, {
+                headers: { Range: range, 'User-Agent': (0, user_agent_1.getUserAgentString)() },
+                redirect: 'manual',
+                signal: idle.signal
+            });
+            if (!REDIRECT_STATUSES.includes(res.status))
+                return { res, url: current };
+            yield ((_a = res.body) === null || _a === void 0 ? void 0 : _a.cancel());
+            const location = res.headers.get('location');
+            const next = location ? redirectTarget(current, location) : null;
+            if (!next || hops >= MAX_REDIRECTS) {
+                throw new Error(`Refused redirect for range ${range}`);
+            }
+            current = next;
+        }
+    });
+}
+// Yields exactly `want` bytes of a response body and fails on more or less.
+function exactBody(res, want, idle, what) {
+    return __asyncGenerator(this, arguments, function* exactBody_1() {
+        if (!res.body)
+            throw new Error(`Empty body for ${what}`);
+        const reader = res.body.getReader();
+        let finished = false;
+        try {
+            let received = 0;
+            for (;;) {
+                idle.touch();
+                const { done, value } = yield __await(reader.read());
+                idle.pause();
+                if (done)
+                    break;
+                received += value.byteLength;
+                if (received > want) {
+                    throw new Error(`${what} returned more than ${want} bytes`);
+                }
+                yield yield __await(Buffer.from(value.buffer, value.byteOffset, value.byteLength));
+            }
+            if (received !== want) {
+                throw new Error(`${what} returned ${received} of ${want} bytes`);
+            }
+            finished = true;
+        }
+        finally {
+            if (!finished)
+                yield __await(reader.cancel().catch(() => { }));
+        }
+    });
+}
+// Yields the bytes [start, end) of the archive. It fails unless the server
+// answers 206 with exactly that Content-Range of the probed object.
+function rangeBody(obj, start, end, idleTimeoutMs, signal) {
+    var _a, _b;
+    return __asyncGenerator(this, arguments, function* rangeBody_1() {
+        const range = `bytes=${start}-${end - 1}`;
+        const idle = new IdleAbort(idleTimeoutMs, `range ${range}`, signal);
+        try {
+            const { res } = yield __await(fetchRange(obj.url, range, idle));
+            const header = res.headers.get('content-range');
+            const cr = parseContentRange(header);
+            if (res.status !== 206 ||
+                !cr ||
+                cr.start !== start ||
+                cr.end !== end - 1 ||
+                cr.total !== obj.total) {
+                yield __await(((_a = res.body) === null || _a === void 0 ? void 0 : _a.cancel()));
+                throw new Error(`Unexpected response for range ${range}: HTTP ${res.status}, Content-Range ${header}`);
+            }
+            if (obj.etag !== null && res.headers.get('etag') !== obj.etag) {
+                yield __await(((_b = res.body) === null || _b === void 0 ? void 0 : _b.cancel()));
+                throw new Error(`ETag changed for range ${range}`);
+            }
+            yield __await(yield* __asyncDelegator(__asyncValues(exactBody(res, end - start, idle, `range ${range}`))));
+        }
+        finally {
+            idle.dispose();
+        }
+    });
+}
+class HttpRangeReader extends yauzl.RandomAccessReader {
+    constructor(obj, tailStart, tail, idleTimeoutMs) {
+        super();
+        this.obj = obj;
+        this.tailStart = tailStart;
+        this.tail = tail;
+        this.idleTimeoutMs = idleTimeoutMs;
+    }
+    _readStreamForRange(start, end) {
+        if (start >= this.tailStart) {
+            return stream_1.Readable.from([
+                this.tail.subarray(start - this.tailStart, end - this.tailStart)
+            ]);
+        }
+        // Readable.from would wait for a pending read before cleaning up, so
+        // destroying the stream aborts the request first.
+        const stop = new AbortController();
+        const body = rangeBody(this.obj, start, end, this.idleTimeoutMs, stop.signal);
+        return new stream_1.Readable({
+            read() {
+                body.next().then(({ done, value }) => this.push(done ? null : value), err => this.destroy(err));
+            },
+            destroy(err, callback) {
+                stop.abort(err !== null && err !== void 0 ? err : new Error('Range stream closed'));
+                body.return(undefined).then(() => callback(err), () => callback(err));
+            }
+        });
+    }
+}
+function writeFull(fh, buf, len, fileOffset) {
+    return __awaiter(this, void 0, void 0, function* () {
+        let written = 0;
+        while (written < len) {
+            const { bytesWritten } = yield fh.write(buf, written, len - written, fileOffset + written);
+            if (bytesWritten <= 0)
+                throw new Error('Short write');
+            written += bytesWritten;
+        }
+    });
+}
+// Downloads one slice into fh through buf and returns its CRC-32.
+function downloadSlice(obj, fh, slice, buf, idleTimeoutMs, signal) {
+    var _a, e_1, _b, _c;
+    return __awaiter(this, void 0, void 0, function* () {
+        for (let attempt = 1;; attempt++) {
+            try {
+                let crc = 0;
+                let pos = 0;
+                let writeOff = slice.dstOffset;
+                try {
+                    for (var _d = true, _e = (e_1 = void 0, __asyncValues(rangeBody(obj, slice.srcStart, slice.srcStart + slice.len, idleTimeoutMs, signal))), _f; _f = yield _e.next(), _a = _f.done, !_a; _d = true) {
+                        _c = _f.value;
+                        _d = false;
+                        const chunk = _c;
+                        crc = crc32(chunk, crc);
+                        let off = 0;
+                        while (off < chunk.length) {
+                            const take = Math.min(buf.length - pos, chunk.length - off);
+                            chunk.copy(buf, pos, off, off + take);
+                            pos += take;
+                            off += take;
+                            if (pos === buf.length) {
+                                yield writeFull(fh, buf, pos, writeOff);
+                                writeOff += pos;
+                                pos = 0;
+                            }
+                        }
+                    }
+                }
+                catch (e_1_1) { e_1 = { error: e_1_1 }; }
+                finally {
+                    try {
+                        if (!_d && !_a && (_b = _e.return)) yield _b.call(_e);
+                    }
+                    finally { if (e_1) throw e_1.error; }
+                }
+                if (pos > 0)
+                    yield writeFull(fh, buf, pos, writeOff);
+                return crc;
+            }
+            catch (err) {
+                if (signal.aborted || attempt >= MAX_SLICE_ATTEMPTS)
+                    throw err;
+                core.debug(`Range at ${slice.srcStart} attempt ${attempt} failed: ${err.message}`);
+                yield new Promise(resolve => setTimeout(resolve, 250 * attempt));
+            }
+        }
+    });
+}
+function extractStoreParallel(job, concurrency, chunkSize, writeBufferSize, idleTimeoutMs) {
+    var _a;
+    return __awaiter(this, void 0, void 0, function* () {
+        const slices = [];
+        for (let off = 0; off < job.size; off += chunkSize) {
+            slices.push({
+                srcStart: job.dataStart + off,
+                dstOffset: off,
+                len: Math.min(chunkSize, job.size - off)
+            });
+        }
+        const crcs = slices.map(() => undefined);
+        // The first failure stops every other lane before the file is closed.
+        const controller = new AbortController();
+        const fh = yield fs.promises.open(job.destPath, 'w');
+        try {
+            yield fh.truncate(job.size);
+            let next = 0;
+            const worker = () => __awaiter(this, void 0, void 0, function* () {
+                const buf = Buffer.allocUnsafe(Math.min(writeBufferSize, chunkSize));
+                while (!controller.signal.aborted && next < slices.length) {
+                    const i = next++;
+                    try {
+                        crcs[i] = yield downloadSlice(job.obj, fh, slices[i], buf, idleTimeoutMs, controller.signal);
+                    }
+                    catch (err) {
+                        controller.abort(err);
+                        throw err;
+                    }
+                }
+            });
+            const lanes = Math.min(concurrency, slices.length);
+            const results = yield Promise.allSettled(Array.from({ length: lanes }, worker));
+            for (const r of results) {
+                if (r.status === 'rejected')
+                    throw (_a = controller.signal.reason) !== null && _a !== void 0 ? _a : r.reason;
+            }
+        }
+        finally {
+            yield fh.close();
+        }
+        let crc = 0;
+        for (const [i, sliceCrc] of crcs.entries()) {
+            if (sliceCrc === undefined)
+                throw new Error(`Slice ${i} was not fetched`);
+            crc = crc32Combine(crc, sliceCrc, slices[i].len);
+        }
+        if (crc !== job.expectedCrc) {
+            throw new ArtifactIntegrityError(`CRC-32 mismatch for ${job.destPath}`);
+        }
+    });
+}
+function extractStreamed(zipfile, entry, destPath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        let crc = 0;
+        const tap = new stream_1.Transform({
+            transform(chunk, _encoding, callback) {
+                crc = crc32(chunk, crc);
+                callback(null, chunk);
+            }
+        });
+        const readStream = yield zipfile.openReadStreamPromise(entry);
+        yield (0, promises_1.pipeline)(readStream, tap, fs.createWriteStream(destPath));
+        if (crc >>> 0 !== entry.crc32) {
+            throw new ArtifactIntegrityError(`CRC-32 mismatch for ${destPath}`);
+        }
+    });
+}
+// Fetches the archive tail with one suffix Range GET. A response that is
+// not exactly that suffix is refused before its body is read.
+function probeTail(url, idleTimeoutMs) {
+    var _a, e_2, _b, _c;
+    var _d;
+    return __awaiter(this, void 0, void 0, function* () {
+        const what = 'the archive tail';
+        const idle = new IdleAbort(idleTimeoutMs, what);
+        try {
+            const { res, url: finalUrl } = yield fetchRange(url, `bytes=-${TAIL_PROBE_BYTES}`, idle);
+            const cr = parseContentRange(res.headers.get('content-range'));
+            const want = cr ? cr.end - cr.start + 1 : 0;
+            if (res.status !== 206 ||
+                !cr ||
+                cr.end !== cr.total - 1 ||
+                want !== Math.min(TAIL_PROBE_BYTES, cr.total)) {
+                yield ((_d = res.body) === null || _d === void 0 ? void 0 : _d.cancel());
+                return null;
+            }
+            const chunks = [];
+            try {
+                for (var _e = true, _f = __asyncValues(exactBody(res, want, idle, what)), _g; _g = yield _f.next(), _a = _g.done, !_a; _e = true) {
+                    _c = _g.value;
+                    _e = false;
+                    const chunk = _c;
+                    chunks.push(chunk);
+                }
+            }
+            catch (e_2_1) { e_2 = { error: e_2_1 }; }
+            finally {
+                try {
+                    if (!_e && !_a && (_b = _f.return)) yield _b.call(_f);
+                }
+                finally { if (e_2) throw e_2.error; }
+            }
+            return {
+                obj: { url: finalUrl, total: cr.total, etag: res.headers.get('etag') },
+                start: cr.start,
+                tail: Buffer.concat(chunks)
+            };
+        }
+        finally {
+            idle.dispose();
+        }
+    });
+}
+/**
+ * Extracts a zip artifact with parallel HTTP Range requests when it holds a
+ * few entries and at least one large stored one, such as a disk image.
+ * Returns false, having written nothing, when the server or the archive does
+ * not qualify, so the caller streams it instead. Throws when a download that
+ * already started fails. The caller then streams it as well, except after
+ * an ArtifactIntegrityError.
+ */
+function tryRangeExtract(url, directory, options = {}) {
+    var _a, e_3, _b, _c;
+    return __awaiter(this, void 0, void 0, function* () {
+        if (hasProxyEnv(url) || !crc32)
+            return false;
+        const concurrency = positive(options.concurrency, exports.DEFAULT_CONCURRENCY);
+        const chunkSize = Math.max(64 * 1024, positive(options.chunkSize, exports.DEFAULT_CHUNK_SIZE));
+        const writeBufferSize = Math.max(64 * 1024, positive(options.writeBufferSize, exports.DEFAULT_WRITE_BUFFER_SIZE));
+        const minArchiveSize = options.minArchiveSize === 0
+            ? 0
+            : positive(options.minArchiveSize, exports.DEFAULT_MIN_ARCHIVE_SIZE);
+        const maxEntries = positive(options.maxEntries, exports.DEFAULT_MAX_ENTRIES);
+        const idleTimeoutMs = Math.min(MAX_TIMER_MS, positive(options.idleTimeoutMs, exports.DEFAULT_IDLE_TIMEOUT_MS));
+        const isLargeStore = (entry) => entry.compressionMethod === 0 && entry.uncompressedSize >= minArchiveSize;
+        let zipfile;
+        try {
+            // Decide. A failure here only means the archive does not qualify.
+            let probe;
+            const entries = [];
+            try {
+                probe = yield probeTail(url, idleTimeoutMs);
+                if (!probe || probe.obj.total < minArchiveSize)
+                    return false;
+                const reader = new HttpRangeReader(probe.obj, probe.start, probe.tail, idleTimeoutMs);
+                zipfile = yield yauzl.fromRandomAccessReaderPromise(reader, probe.obj.total, {
+                    lazyEntries: true,
+                    autoClose: false,
+                    // Reject backslashes instead of turning them into directories,
+                    // which the streaming extractor does not do.
+                    strictFileNames: true
+                });
+                if (zipfile.entryCount > maxEntries)
+                    return false;
+                try {
+                    for (var _d = true, _e = __asyncValues(zipfile.eachEntry()), _f; _f = yield _e.next(), _a = _f.done, !_a; _d = true) {
+                        _c = _f.value;
+                        _d = false;
+                        const entry = _c;
+                        if (entry.isEncrypted() ||
+                            !entry.canDecodeFileData() ||
+                            !namedLikeStreaming(entry)) {
+                            return false;
+                        }
+                        resolveSafePath(directory, entry.fileName);
+                        entries.push(entry);
+                    }
+                }
+                catch (e_3_1) { e_3 = { error: e_3_1 }; }
+                finally {
+                    try {
+                        if (!_d && !_a && (_b = _e.return)) yield _b.call(_e);
+                    }
+                    finally { if (e_3) throw e_3.error; }
+                }
+                if (!entries.some(isLargeStore))
+                    return false;
+            }
+            catch (err) {
+                core.debug(`Parallel range download not used: ${err.message}`);
+                return false;
+            }
+            // Extract. A failure here is an error the caller recovers from.
+            core.debug(`Using parallel range extraction (${entries.length} entries, ${probe.obj.total} bytes, concurrency=${concurrency})`);
+            for (const entry of entries) {
+                const destPath = resolveSafePath(directory, entry.fileName);
+                if (entry.fileName.endsWith('/')) {
+                    yield fs.promises.mkdir(destPath, { recursive: true });
+                    continue;
+                }
+                yield fs.promises.mkdir(path.dirname(destPath), { recursive: true });
+                if (isLargeStore(entry)) {
+                    const { fileDataStart } = yield zipfile.readLocalFileHeaderPromise(entry, { minimal: true });
+                    yield extractStoreParallel({
+                        obj: probe.obj,
+                        dataStart: fileDataStart,
+                        size: entry.uncompressedSize,
+                        expectedCrc: entry.crc32,
+                        destPath
+                    }, concurrency, chunkSize, writeBufferSize, idleTimeoutMs);
+                }
+                else {
+                    yield extractStreamed(zipfile, entry, destPath);
+                }
+            }
+            return true;
+        }
+        finally {
+            zipfile === null || zipfile === void 0 ? void 0 : zipfile.close();
+        }
+    });
+}
+exports.tryRangeExtract = tryRangeExtract;
+//# sourceMappingURL=range-extract.js.map
+
+/***/ }),
+
 /***/ 68160:
 /***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
 
@@ -2619,7 +3236,7 @@ const plugin_retry_1 = __nccwpck_require__(86298);
 const core = __importStar(__nccwpck_require__(42186));
 const utils_1 = __nccwpck_require__(73030);
 const retry_options_1 = __nccwpck_require__(5652);
-const plugin_request_log_1 = __nccwpck_require__(7487);
+const plugin_request_log_1 = __nccwpck_require__(68883);
 const util_1 = __nccwpck_require__(72812);
 const user_agent_1 = __nccwpck_require__(2950);
 const artifact_twirp_client_1 = __nccwpck_require__(20615);
@@ -2726,7 +3343,7 @@ const github_1 = __nccwpck_require__(95438);
 const user_agent_1 = __nccwpck_require__(2950);
 const retry_options_1 = __nccwpck_require__(5652);
 const utils_1 = __nccwpck_require__(73030);
-const plugin_request_log_1 = __nccwpck_require__(7487);
+const plugin_request_log_1 = __nccwpck_require__(68883);
 const plugin_retry_1 = __nccwpck_require__(86298);
 const artifact_twirp_client_1 = __nccwpck_require__(20615);
 const util_1 = __nccwpck_require__(72812);
@@ -41474,6 +42091,44 @@ exports.paginatingEndpoints = paginatingEndpoints;
 
 /***/ }),
 
+/***/ 68883:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+
+const VERSION = "1.0.4";
+
+/**
+ * @param octokit Octokit instance
+ * @param options Options passed to Octokit constructor
+ */
+
+function requestLog(octokit) {
+  octokit.hook.wrap("request", (request, options) => {
+    octokit.log.debug("request", options);
+    const start = Date.now();
+    const requestOptions = octokit.request.endpoint.parse(options);
+    const path = requestOptions.url.replace(options.baseUrl, "");
+    return request(options).then(response => {
+      octokit.log.info(`${requestOptions.method} ${path} - ${response.status} in ${Date.now() - start}ms`);
+      return response;
+    }).catch(error => {
+      octokit.log.info(`${requestOptions.method} ${path} - ${error.status} in ${Date.now() - start}ms`);
+      throw error;
+    });
+  });
+}
+requestLog.VERSION = VERSION;
+
+exports.requestLog = requestLog;
+//# sourceMappingURL=index.js.map
+
+
+/***/ }),
+
 /***/ 83044:
 /***/ ((__unused_webpack_module, exports) => {
 
@@ -75600,6 +76255,68 @@ function onceStrict (fn) {
   f.onceError = name + " shouldn't be called more than once"
   f.called = false
   return f
+}
+
+
+/***/ }),
+
+/***/ 54833:
+/***/ ((module) => {
+
+module.exports = Pend;
+
+function Pend() {
+  this.pending = 0;
+  this.max = Infinity;
+  this.listeners = [];
+  this.waiting = [];
+  this.error = null;
+}
+
+Pend.prototype.go = function(fn) {
+  if (this.pending < this.max) {
+    pendGo(this, fn);
+  } else {
+    this.waiting.push(fn);
+  }
+};
+
+Pend.prototype.wait = function(cb) {
+  if (this.pending === 0) {
+    cb(this.error);
+  } else {
+    this.listeners.push(cb);
+  }
+};
+
+Pend.prototype.hold = function() {
+  return pendHold(this);
+};
+
+function pendHold(self) {
+  self.pending += 1;
+  var called = false;
+  return onCb;
+  function onCb(err) {
+    if (called) throw new Error("callback called twice");
+    called = true;
+    self.error = self.error || err;
+    self.pending -= 1;
+    if (self.waiting.length > 0 && self.pending < self.max) {
+      pendGo(self, self.waiting.shift());
+    } else if (self.pending === 0) {
+      var listeners = self.listeners;
+      self.listeners = [];
+      listeners.forEach(cbListener);
+    }
+  }
+  function cbListener(listener) {
+    listener(self.error);
+  }
+}
+
+function pendGo(self, fn) {
+  fn(pendHold(self));
 }
 
 
@@ -120898,6 +121615,1356 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
+/***/ 75481:
+/***/ ((module) => {
+
+// Adapted from https://github.com/brianloveswords/buffer-crc32/blob/v0.2.13/index.js
+const CRC_TABLE = new Int32Array([
+  0x00000000, 0x77073096, 0xee0e612c, 0x990951ba, 0x076dc419, 0x706af48f, 0xe963a535, 0x9e6495a3,
+  0x0edb8832, 0x79dcb8a4, 0xe0d5e91e, 0x97d2d988, 0x09b64c2b, 0x7eb17cbd, 0xe7b82d07, 0x90bf1d91,
+  0x1db71064, 0x6ab020f2, 0xf3b97148, 0x84be41de, 0x1adad47d, 0x6ddde4eb, 0xf4d4b551, 0x83d385c7,
+  0x136c9856, 0x646ba8c0, 0xfd62f97a, 0x8a65c9ec, 0x14015c4f, 0x63066cd9, 0xfa0f3d63, 0x8d080df5,
+  0x3b6e20c8, 0x4c69105e, 0xd56041e4, 0xa2677172, 0x3c03e4d1, 0x4b04d447, 0xd20d85fd, 0xa50ab56b,
+  0x35b5a8fa, 0x42b2986c, 0xdbbbc9d6, 0xacbcf940, 0x32d86ce3, 0x45df5c75, 0xdcd60dcf, 0xabd13d59,
+  0x26d930ac, 0x51de003a, 0xc8d75180, 0xbfd06116, 0x21b4f4b5, 0x56b3c423, 0xcfba9599, 0xb8bda50f,
+  0x2802b89e, 0x5f058808, 0xc60cd9b2, 0xb10be924, 0x2f6f7c87, 0x58684c11, 0xc1611dab, 0xb6662d3d,
+  0x76dc4190, 0x01db7106, 0x98d220bc, 0xefd5102a, 0x71b18589, 0x06b6b51f, 0x9fbfe4a5, 0xe8b8d433,
+  0x7807c9a2, 0x0f00f934, 0x9609a88e, 0xe10e9818, 0x7f6a0dbb, 0x086d3d2d, 0x91646c97, 0xe6635c01,
+  0x6b6b51f4, 0x1c6c6162, 0x856530d8, 0xf262004e, 0x6c0695ed, 0x1b01a57b, 0x8208f4c1, 0xf50fc457,
+  0x65b0d9c6, 0x12b7e950, 0x8bbeb8ea, 0xfcb9887c, 0x62dd1ddf, 0x15da2d49, 0x8cd37cf3, 0xfbd44c65,
+  0x4db26158, 0x3ab551ce, 0xa3bc0074, 0xd4bb30e2, 0x4adfa541, 0x3dd895d7, 0xa4d1c46d, 0xd3d6f4fb,
+  0x4369e96a, 0x346ed9fc, 0xad678846, 0xda60b8d0, 0x44042d73, 0x33031de5, 0xaa0a4c5f, 0xdd0d7cc9,
+  0x5005713c, 0x270241aa, 0xbe0b1010, 0xc90c2086, 0x5768b525, 0x206f85b3, 0xb966d409, 0xce61e49f,
+  0x5edef90e, 0x29d9c998, 0xb0d09822, 0xc7d7a8b4, 0x59b33d17, 0x2eb40d81, 0xb7bd5c3b, 0xc0ba6cad,
+  0xedb88320, 0x9abfb3b6, 0x03b6e20c, 0x74b1d29a, 0xead54739, 0x9dd277af, 0x04db2615, 0x73dc1683,
+  0xe3630b12, 0x94643b84, 0x0d6d6a3e, 0x7a6a5aa8, 0xe40ecf0b, 0x9309ff9d, 0x0a00ae27, 0x7d079eb1,
+  0xf00f9344, 0x8708a3d2, 0x1e01f268, 0x6906c2fe, 0xf762575d, 0x806567cb, 0x196c3671, 0x6e6b06e7,
+  0xfed41b76, 0x89d32be0, 0x10da7a5a, 0x67dd4acc, 0xf9b9df6f, 0x8ebeeff9, 0x17b7be43, 0x60b08ed5,
+  0xd6d6a3e8, 0xa1d1937e, 0x38d8c2c4, 0x4fdff252, 0xd1bb67f1, 0xa6bc5767, 0x3fb506dd, 0x48b2364b,
+  0xd80d2bda, 0xaf0a1b4c, 0x36034af6, 0x41047a60, 0xdf60efc3, 0xa867df55, 0x316e8eef, 0x4669be79,
+  0xcb61b38c, 0xbc66831a, 0x256fd2a0, 0x5268e236, 0xcc0c7795, 0xbb0b4703, 0x220216b9, 0x5505262f,
+  0xc5ba3bbe, 0xb2bd0b28, 0x2bb45a92, 0x5cb36a04, 0xc2d7ffa7, 0xb5d0cf31, 0x2cd99e8b, 0x5bdeae1d,
+  0x9b64c2b0, 0xec63f226, 0x756aa39c, 0x026d930a, 0x9c0906a9, 0xeb0e363f, 0x72076785, 0x05005713,
+  0x95bf4a82, 0xe2b87a14, 0x7bb12bae, 0x0cb61b38, 0x92d28e9b, 0xe5d5be0d, 0x7cdcefb7, 0x0bdbdf21,
+  0x86d3d2d4, 0xf1d4e242, 0x68ddb3f8, 0x1fda836e, 0x81be16cd, 0xf6b9265b, 0x6fb077e1, 0x18b74777,
+  0x88085ae6, 0xff0f6a70, 0x66063bca, 0x11010b5c, 0x8f659eff, 0xf862ae69, 0x616bffd3, 0x166ccf45,
+  0xa00ae278, 0xd70dd2ee, 0x4e048354, 0x3903b3c2, 0xa7672661, 0xd06016f7, 0x4969474d, 0x3e6e77db,
+  0xaed16a4a, 0xd9d65adc, 0x40df0b66, 0x37d83bf0, 0xa9bcae53, 0xdebb9ec5, 0x47b2cf7f, 0x30b5ffe9,
+  0xbdbdf21c, 0xcabac28a, 0x53b39330, 0x24b4a3a6, 0xbad03605, 0xcdd70693, 0x54de5729, 0x23d967bf,
+  0xb3667a2e, 0xc4614ab8, 0x5d681b02, 0x2a6f2b94, 0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d,
+]);
+
+function crc32(buf) {
+  let crc = -1;
+  for (let x of buf) {
+    crc = CRC_TABLE[(crc ^ x) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+module.exports = crc32;
+
+
+/***/ }),
+
+/***/ 11276:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+// This was adapted from https://github.com/andrewrk/node-fd-slicer by Andrew Kelley under the MIT License.
+var fs = __nccwpck_require__(57147);
+var util = __nccwpck_require__(73837);
+var stream = __nccwpck_require__(12781);
+var Readable = stream.Readable;
+var PassThrough = stream.PassThrough;
+var Pend = __nccwpck_require__(54833);
+var EventEmitter = (__nccwpck_require__(82361).EventEmitter);
+
+exports.BufferSlicer = BufferSlicer;
+exports.FdSlicer = FdSlicer;
+
+util.inherits(FdSlicer, EventEmitter);
+function FdSlicer(fd) {
+  EventEmitter.call(this);
+
+  this.fd = fd;
+  this.pend = new Pend();
+  this.pend.max = 1;
+  this.refCount = 0;
+}
+
+FdSlicer.prototype.read = function(buffer, offset, length, position, callback) {
+  var self = this;
+  self.pend.go(function(cb) {
+    fs.read(self.fd, buffer, offset, length, position, function(err, bytesRead, buffer) {
+      cb();
+      callback(err, bytesRead, buffer);
+    });
+  });
+};
+
+FdSlicer.prototype.createReadStream = function(options) {
+  return new ReadStream(this, options);
+};
+
+FdSlicer.prototype.ref = function() {
+  this.refCount += 1;
+};
+
+FdSlicer.prototype.unref = function() {
+  var self = this;
+  self.refCount -= 1;
+  if (self.refCount < 0) throw new Error("invalid unref");
+  if (self.refCount > 0) return;
+
+  fs.close(self.fd, onCloseDone);
+
+  function onCloseDone(err) {
+    if (err) {
+      self.emit('error', err);
+    } else {
+      self.emit('close');
+    }
+  }
+};
+
+util.inherits(ReadStream, Readable);
+function ReadStream(context, options) {
+  options = options || {};
+  Readable.call(this, options);
+
+  this.context = context;
+  this.context.ref();
+
+  this.start = options.start || 0;
+  this.endOffset = options.end;
+  this.pos = this.start;
+}
+
+ReadStream.prototype._read = function(n) {
+  var self = this;
+
+  var toRead = Math.min(self._readableState.highWaterMark, n);
+  if (self.endOffset != null) {
+    toRead = Math.min(toRead, self.endOffset - self.pos);
+  }
+  if (toRead <= 0) {
+    self.push(null);
+    this._cleanup();
+    return;
+  }
+  self.context.pend.go(function(cb) {
+    var buffer = Buffer.allocUnsafe(toRead);
+    fs.read(self.context.fd, buffer, 0, toRead, self.pos, function(err, bytesRead) {
+      if (err) {
+        self.destroy(err);
+      } else if (bytesRead === 0) {
+        self.push(null);
+        self._cleanup();
+      } else {
+        self.pos += bytesRead;
+        self.push(buffer.slice(0, bytesRead));
+      }
+      cb();
+    });
+  });
+};
+
+ReadStream.prototype._destroy = function(err, cb) {
+  // Node 14+ calls this automatically at EOF.
+  this._cleanup();
+  cb(err);
+};
+
+ReadStream.prototype._cleanup = function() {
+  if (this.context != null) {
+    this.context.unref();
+    this.context = null;
+  }
+};
+
+util.inherits(BufferSlicer, EventEmitter);
+function BufferSlicer(buffer) {
+  EventEmitter.call(this);
+
+  this.refCount = 0;
+  this.buffer = buffer;
+}
+
+BufferSlicer.prototype.read = function(buffer, offset, length, position, callback) {
+  if (!(0 <= offset && offset <= buffer.length)) throw new RangeError("offset outside buffer: 0 <= " + offset + " <= " + buffer.length);
+  if (position < 0) throw new RangeError("position is negative: " + position);
+  if (offset + length > buffer.length) {
+    // The caller's buffer can't hold all the bytes they're trying to read.
+    // Clamp the length instead of giving an error.
+    // The callback will be informed of fewer than expected bytes written.
+    length = buffer.length - offset;
+  }
+  if (position + length > this.buffer.length) {
+    // Clamp any attempt to read past the end of the source buffer.
+    length = this.buffer.length - position;
+  }
+  if (length <= 0) {
+    // After any clamping, we're fully out of bounds or otherwise have nothing to do.
+    // This isn't an error; it's just zero bytes written.
+    setImmediate(function() {
+      callback(null, 0);
+    });
+    return;
+  }
+  this.buffer.copy(buffer, offset, position, position + length);
+  setImmediate(function() {
+    callback(null, length);
+  });
+};
+
+BufferSlicer.prototype.createReadStream = function(options) {
+  options = options || {};
+  var readStream = new PassThrough(options);
+  readStream.start = options.start || 0;
+  readStream.endOffset = options.end;
+  // by the time this function returns, we'll be done.
+  readStream.pos = readStream.endOffset || this.buffer.length;
+
+  var entireSlice = this.buffer.slice(readStream.start, readStream.pos);
+  // Cut the buffer into smaller slices for better memory usage when streaming into a zlib inflate stream.
+  // See https://github.com/thejoshwolfe/yauzl/issues/87
+  var maxChunkSize = 0x10000;
+  var offset = 0;
+  while (true) {
+    var nextOffset = offset + maxChunkSize;
+    if (nextOffset >= entireSlice.length) {
+      // last chunk
+      if (offset < entireSlice.length) {
+        readStream.write(entireSlice.slice(offset, entireSlice.length));
+      }
+      break;
+    }
+    readStream.write(entireSlice.slice(offset, nextOffset));
+    offset = nextOffset;
+  }
+
+  readStream.end();
+  return readStream;
+};
+
+BufferSlicer.prototype.ref = function() {
+  this.refCount += 1;
+};
+
+BufferSlicer.prototype.unref = function() {
+  this.refCount -= 1;
+
+  if (this.refCount < 0) {
+    throw new Error("invalid unref");
+  }
+};
+
+
+/***/ }),
+
+/***/ 78781:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+var fs = __nccwpck_require__(57147);
+var zlib = __nccwpck_require__(59796);
+var fd_slicer = __nccwpck_require__(11276);
+var util = __nccwpck_require__(73837);
+var EventEmitter = (__nccwpck_require__(82361).EventEmitter);
+var Transform = (__nccwpck_require__(12781).Transform);
+var PassThrough = (__nccwpck_require__(12781).PassThrough);
+var Writable = (__nccwpck_require__(12781).Writable);
+
+// Node 20 added zlib.crc32.
+const crc32 = typeof zlib.crc32 === "function" ? zlib.crc32 : __nccwpck_require__(75481);
+
+exports.open = open;
+exports.fromFd = fromFd;
+exports.fromBuffer = fromBuffer;
+exports.fromRandomAccessReader = fromRandomAccessReader;
+exports.openPromise = openPromise;
+exports.fromFdPromise = fromFdPromise;
+exports.fromBufferPromise = fromBufferPromise;
+exports.fromRandomAccessReaderPromise = fromRandomAccessReaderPromise;
+
+exports.dosDateTimeToDate = dosDateTimeToDate;
+exports.getFileNameLowLevel = getFileNameLowLevel;
+exports.validateFileName = validateFileName;
+exports.parseExtraFields = parseExtraFields;
+exports.ZipFile = ZipFile;
+exports.Entry = Entry;
+exports.LocalFileHeader = LocalFileHeader;
+exports.RandomAccessReader = RandomAccessReader;
+
+function openPromise(path, options) {
+  return new Promise((resolve, reject) => {
+    open(path, {...options, lazyEntries: true}, function(err, zipfile) {
+      if (err) return reject(err);
+      resolve(zipfile);
+    });
+  });
+}
+function fromFdPromise(fd, options) {
+  return new Promise((resolve, reject) => {
+    fromFd(fd, {...options, lazyEntries: true}, function(err, zipfile) {
+      if (err) return reject(err);
+      resolve(zipfile);
+    });
+  });
+}
+function fromBufferPromise(buffer, options) {
+  return new Promise((resolve, reject) => {
+    fromBuffer(buffer, {...options, lazyEntries: true}, function(err, zipfile) {
+      if (err) return reject(err);
+      resolve(zipfile);
+    });
+  });
+}
+function fromRandomAccessReaderPromise(reader, totalSize, options) {
+  return new Promise((resolve, reject) => {
+    fromRandomAccessReader(reader, totalSize, {...options, lazyEntries: true}, function(err, zipfile) {
+      if (err) return reject(err);
+      resolve(zipfile);
+    });
+  });
+}
+
+function open(path, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = null;
+  }
+  if (options == null) options = {};
+  if (options.autoClose == null) options.autoClose = true;
+  if (options.lazyEntries == null) options.lazyEntries = false;
+  if (options.decodeStrings == null) options.decodeStrings = true;
+  if (options.validateEntrySizes == null) options.validateEntrySizes = true;
+  if (options.strictFileNames == null) options.strictFileNames = false;
+  if (callback == null) callback = defaultCallback;
+  fs.open(path, "r", function(err, fd) {
+    if (err) return callback(err);
+    fromFd(fd, options, function(err, zipfile) {
+      if (err) fs.close(fd, defaultCallback);
+      callback(err, zipfile);
+    });
+  });
+}
+
+function fromFd(fd, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = null;
+  }
+  if (options == null) options = {};
+  if (options.autoClose == null) options.autoClose = false;
+  if (options.lazyEntries == null) options.lazyEntries = false;
+  if (options.decodeStrings == null) options.decodeStrings = true;
+  if (options.validateEntrySizes == null) options.validateEntrySizes = true;
+  if (options.strictFileNames == null) options.strictFileNames = false;
+  if (callback == null) callback = defaultCallback;
+  fs.fstat(fd, function(err, stats) {
+    if (err) return callback(err);
+    var reader = new fd_slicer.FdSlicer(fd);
+    fromRandomAccessReader(reader, stats.size, options, callback);
+  });
+}
+
+function fromBuffer(buffer, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = null;
+  }
+  if (options == null) options = {};
+  options.autoClose = false;
+  if (options.lazyEntries == null) options.lazyEntries = false;
+  if (options.decodeStrings == null) options.decodeStrings = true;
+  if (options.validateEntrySizes == null) options.validateEntrySizes = true;
+  if (options.strictFileNames == null) options.strictFileNames = false;
+  var reader = new fd_slicer.BufferSlicer(buffer);
+  fromRandomAccessReader(reader, buffer.length, options, callback);
+}
+
+function fromRandomAccessReader(reader, totalSize, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = null;
+  }
+  if (options == null) options = {};
+  if (options.autoClose == null) options.autoClose = true;
+  if (options.lazyEntries == null) options.lazyEntries = false;
+  if (options.decodeStrings == null) options.decodeStrings = true;
+  var decodeStrings = !!options.decodeStrings;
+  if (options.validateEntrySizes == null) options.validateEntrySizes = true;
+  if (options.strictFileNames == null) options.strictFileNames = false;
+  if (callback == null) callback = defaultCallback;
+  if (typeof totalSize !== "number") throw new Error("expected totalSize parameter to be a number");
+  if (totalSize > Number.MAX_SAFE_INTEGER) {
+    throw new Error("zip file too large. only file sizes up to 2^52 are supported due to JavaScript's Number type being an IEEE 754 double.");
+  }
+
+  // the matching unref() call is in zipfile.close()
+  reader.ref();
+
+  // eocdr means End of Central Directory Record.
+  // search backwards for the eocdr signature.
+  // the last field of the eocdr is a variable-length comment.
+  // the comment size is encoded in a 2-byte field in the eocdr, which we can't find without trudging backwards through the comment to find it.
+  // as a consequence of this design decision, it's possible to have ambiguous zip file metadata if a coherent eocdr was in the comment.
+  // we search backwards for a eocdr signature, and hope that whoever made the zip file was smart enough to forbid the eocdr signature in the comment.
+  var eocdrWithoutCommentSize = 22;
+  var zip64EocdlSize = 20; // Zip64 end of central directory locator
+  var maxCommentSize = 0xffff; // 2-byte size
+  var bufferSize = Math.min(zip64EocdlSize + eocdrWithoutCommentSize + maxCommentSize, totalSize);
+  var buffer = newBuffer(bufferSize);
+  var bufferReadStart = totalSize - buffer.length;
+  readAndAssertNoEof(reader, buffer, 0, bufferSize, bufferReadStart, function(err) {
+    if (err) return callback(err);
+    for (var i = bufferSize - eocdrWithoutCommentSize; i >= 0; i -= 1) {
+      if (buffer.readUInt32LE(i) !== 0x06054b50) continue;
+      // found eocdr
+      var eocdrBuffer = buffer.subarray(i);
+
+      // 0 - End of central directory signature = 0x06054b50
+      // 4 - Number of this disk
+      var diskNumber = eocdrBuffer.readUInt16LE(4);
+      // 6 - Disk where central directory starts
+      // 8 - Number of central directory records on this disk
+      // 10 - Total number of central directory records
+      var entryCount = eocdrBuffer.readUInt16LE(10);
+      // 12 - Size of central directory (bytes)
+      // 16 - Offset of start of central directory, relative to start of archive
+      var centralDirectoryOffset = eocdrBuffer.readUInt32LE(16);
+      // 20 - Comment length
+      var commentLength = eocdrBuffer.readUInt16LE(20);
+      var expectedCommentLength = eocdrBuffer.length - eocdrWithoutCommentSize;
+      if (commentLength !== expectedCommentLength) {
+        return callback(new Error("Invalid comment length. Expected: " + expectedCommentLength + ". Found: " + commentLength + ". Are there extra bytes at the end of the file? Or is the end of central dir signature `PK☺☻` in the comment?"));
+      }
+      // 22 - Comment
+      // the encoding is always cp437.
+      var comment = decodeStrings ? decodeBuffer(eocdrBuffer.subarray(22), false)
+                                  : eocdrBuffer.subarray(22);
+
+      // Look for a Zip64 end of central directory locator
+      if (i - zip64EocdlSize >= 0 && buffer.readUInt32LE(i - zip64EocdlSize) === 0x07064b50) {
+        // ZIP64 format
+        var zip64EocdlBuffer = buffer.subarray(i - zip64EocdlSize, i - zip64EocdlSize + zip64EocdlSize);
+        // 0 - zip64 end of central dir locator signature = 0x07064b50
+        // 4 - number of the disk with the start of the zip64 end of central directory
+        // 8 - relative offset of the zip64 end of central directory record
+        var zip64EocdrOffset = readUInt64LE(zip64EocdlBuffer, 8);
+        // 16 - total number of disks
+
+        // ZIP64 end of central directory record
+        var zip64EocdrBuffer = newBuffer(56);
+        return readAndAssertNoEof(reader, zip64EocdrBuffer, 0, zip64EocdrBuffer.length, zip64EocdrOffset, function(err) {
+          if (err) return callback(err);
+
+          // 0 - zip64 end of central dir signature                           4 bytes  (0x06064b50)
+          if (zip64EocdrBuffer.readUInt32LE(0) !== 0x06064b50) {
+            return callback(new Error("invalid zip64 end of central directory record signature"));
+          }
+          // 4 - size of zip64 end of central directory record                8 bytes
+          // 12 - version made by                                             2 bytes
+          // 14 - version needed to extract                                   2 bytes
+          // 16 - number of this disk                                         4 bytes
+          diskNumber = zip64EocdrBuffer.readUInt32LE(16);
+          if (diskNumber !== 0) {
+            // Check this only after zip64 overrides. See #118.
+            return callback(new Error("multi-disk zip files are not supported: found disk number: " + diskNumber));
+          }
+          // 20 - number of the disk with the start of the central directory  4 bytes
+          // 24 - total number of entries in the central directory on this disk         8 bytes
+          // 32 - total number of entries in the central directory            8 bytes
+          entryCount = readUInt64LE(zip64EocdrBuffer, 32);
+          // 40 - size of the central directory                               8 bytes
+          // 48 - offset of start of central directory with respect to the starting disk number     8 bytes
+          centralDirectoryOffset = readUInt64LE(zip64EocdrBuffer, 48);
+          // 56 - zip64 extensible data sector                                (variable size)
+          return callback(null, new ZipFile(reader, centralDirectoryOffset, totalSize, entryCount, comment, options.autoClose, options.lazyEntries, decodeStrings, options.validateEntrySizes, options.strictFileNames));
+        });
+      }
+
+      // Not ZIP64 format
+      if (diskNumber !== 0) {
+        return callback(new Error("multi-disk zip files are not supported: found disk number: " + diskNumber));
+      }
+      return callback(null, new ZipFile(reader, centralDirectoryOffset, totalSize, entryCount, comment, options.autoClose, options.lazyEntries, decodeStrings, options.validateEntrySizes, options.strictFileNames));
+
+    }
+
+    // Not a zip file.
+    callback(new Error("End of central directory record signature not found. Either not a zip file, or file is truncated."));
+  });
+}
+
+util.inherits(ZipFile, EventEmitter);
+function ZipFile(reader, centralDirectoryOffset, fileSize, entryCount, comment, autoClose, lazyEntries, decodeStrings, validateEntrySizes, strictFileNames) {
+  var self = this;
+  EventEmitter.call(self);
+  self.reader = reader;
+  // forward close events
+  self.reader.on("error", function(err) {
+    // error closing the fd
+    emitError(self, err);
+  });
+  self.reader.once("close", function() {
+    self.emit("close");
+  });
+  self.readEntryCursor = centralDirectoryOffset;
+  self.fileSize = fileSize;
+  self.entryCount = entryCount;
+  self.comment = comment;
+  self.entriesRead = 0;
+  self.autoClose = !!autoClose;
+  self.lazyEntries = !!lazyEntries;
+  self.decodeStrings = !!decodeStrings;
+  self.validateEntrySizes = !!validateEntrySizes;
+  self.strictFileNames = !!strictFileNames;
+  self.isOpen = true;
+  self.emittedError = false;
+  self.hasEachEntryBeenCalled = false;
+
+  if (!self.lazyEntries) self._readEntry();
+}
+ZipFile.prototype.close = function() {
+  if (!this.isOpen) return;
+  this.isOpen = false;
+  this.reader.unref();
+};
+
+function emitErrorAndAutoClose(self, err) {
+  if (self.autoClose) self.close();
+  emitError(self, err);
+}
+function emitError(self, err) {
+  if (self.emittedError) return;
+  self.emittedError = true;
+  self.emit("error", err);
+}
+
+ZipFile.prototype.readEntry = function() {
+  if (!this.lazyEntries) throw new Error("readEntry() called without lazyEntries:true");
+  this._readEntry();
+};
+ZipFile.prototype._readEntry = function() {
+  var self = this;
+  if (self.entryCount === self.entriesRead) {
+    // done with metadata
+    setImmediate(function() {
+      if (self.autoClose) self.close();
+      if (self.emittedError) return;
+      self.emit("end");
+    });
+    return;
+  }
+  if (self.emittedError) return;
+  var buffer = newBuffer(46);
+  readAndAssertNoEof(self.reader, buffer, 0, buffer.length, self.readEntryCursor, function(err) {
+    if (err) return emitErrorAndAutoClose(self, err);
+    if (self.emittedError) return;
+    var entry = new Entry();
+    // 0 - Central directory file header signature
+    var signature = buffer.readUInt32LE(0);
+    if (signature !== 0x02014b50) return emitErrorAndAutoClose(self, new Error("invalid central directory file header signature: 0x" + signature.toString(16)));
+    // 4 - Version made by
+    entry.versionMadeBy = buffer.readUInt16LE(4);
+    // 6 - Version needed to extract (minimum)
+    entry.versionNeededToExtract = buffer.readUInt16LE(6);
+    // 8 - General purpose bit flag
+    entry.generalPurposeBitFlag = buffer.readUInt16LE(8);
+    // 10 - Compression method
+    entry.compressionMethod = buffer.readUInt16LE(10);
+    // 12 - File last modification time
+    entry.lastModFileTime = buffer.readUInt16LE(12);
+    // 14 - File last modification date
+    entry.lastModFileDate = buffer.readUInt16LE(14);
+    // 16 - CRC-32
+    entry.crc32 = buffer.readUInt32LE(16);
+    // 20 - Compressed size
+    entry.compressedSize = buffer.readUInt32LE(20);
+    // 24 - Uncompressed size
+    entry.uncompressedSize = buffer.readUInt32LE(24);
+    // 28 - File name length (n)
+    entry.fileNameLength = buffer.readUInt16LE(28);
+    // 30 - Extra field length (m)
+    entry.extraFieldLength = buffer.readUInt16LE(30);
+    // 32 - File comment length (k)
+    entry.fileCommentLength = buffer.readUInt16LE(32);
+    // 34 - Disk number where file starts
+    // 36 - Internal file attributes
+    entry.internalFileAttributes = buffer.readUInt16LE(36);
+    // 38 - External file attributes
+    entry.externalFileAttributes = buffer.readUInt32LE(38);
+    // 42 - Relative offset of local file header
+    entry.relativeOffsetOfLocalHeader = buffer.readUInt32LE(42);
+
+    if (entry.generalPurposeBitFlag & 0x40) return emitErrorAndAutoClose(self, new Error("strong encryption is not supported"));
+
+    self.readEntryCursor += 46;
+
+    buffer = newBuffer(entry.fileNameLength + entry.extraFieldLength + entry.fileCommentLength);
+    readAndAssertNoEof(self.reader, buffer, 0, buffer.length, self.readEntryCursor, function(err) {
+      if (err) return emitErrorAndAutoClose(self, err);
+      if (self.emittedError) return;
+      // 46 - File name
+      entry.fileNameRaw = buffer.subarray(0, entry.fileNameLength);
+      // 46+n - Extra field
+      var fileCommentStart = entry.fileNameLength + entry.extraFieldLength;
+      entry.extraFieldRaw = buffer.subarray(entry.fileNameLength, fileCommentStart);
+      // 46+n+m - File comment
+      entry.fileCommentRaw = buffer.subarray(fileCommentStart, fileCommentStart + entry.fileCommentLength);
+
+      // Parse the extra fields, which we need for processing other fields.
+      try {
+        entry.extraFields = parseExtraFields(entry.extraFieldRaw);
+      } catch (err) {
+        return emitErrorAndAutoClose(self, err);
+      }
+
+      // Interpret strings according to bit flags, extra fields, and options.
+      if (self.decodeStrings) {
+        var isUtf8 = (entry.generalPurposeBitFlag & 0x800) !== 0;
+        entry.fileComment = decodeBuffer(entry.fileCommentRaw, isUtf8);
+        entry.fileName = getFileNameLowLevel(entry.generalPurposeBitFlag, entry.fileNameRaw, entry.extraFields, self.strictFileNames);
+        var errorMessage = validateFileName(entry.fileName);
+        if (errorMessage != null) return emitErrorAndAutoClose(self, new Error(errorMessage));
+      } else {
+        entry.fileComment = entry.fileCommentRaw;
+        entry.fileName = entry.fileNameRaw;
+      }
+      // Maintain API compatibility. See https://github.com/thejoshwolfe/yauzl/issues/47
+      entry.comment = entry.fileComment;
+
+      self.readEntryCursor += buffer.length;
+      self.entriesRead += 1;
+
+      // Check for the Zip64 Extended Information Extra Field.
+      for (var i = 0; i < entry.extraFields.length; i++) {
+        var extraField = entry.extraFields[i];
+        if (extraField.id !== 0x0001) continue;
+        // Found it.
+
+        var zip64EiefBuffer = extraField.data;
+        var index = 0;
+        // 0 - Original Size          8 bytes
+        if (entry.uncompressedSize === 0xffffffff) {
+          if (index + 8 > zip64EiefBuffer.length) {
+            return emitErrorAndAutoClose(self, new Error("zip64 extended information extra field does not include uncompressed size"));
+          }
+          entry.uncompressedSize = readUInt64LE(zip64EiefBuffer, index);
+          index += 8;
+        }
+        // 8 - Compressed Size        8 bytes
+        if (entry.compressedSize === 0xffffffff) {
+          if (index + 8 > zip64EiefBuffer.length) {
+            return emitErrorAndAutoClose(self, new Error("zip64 extended information extra field does not include compressed size"));
+          }
+          entry.compressedSize = readUInt64LE(zip64EiefBuffer, index);
+          index += 8;
+        }
+        // 16 - Relative Header Offset 8 bytes
+        if (entry.relativeOffsetOfLocalHeader === 0xffffffff) {
+          if (index + 8 > zip64EiefBuffer.length) {
+            return emitErrorAndAutoClose(self, new Error("zip64 extended information extra field does not include relative header offset"));
+          }
+          entry.relativeOffsetOfLocalHeader = readUInt64LE(zip64EiefBuffer, index);
+          index += 8;
+        }
+        // 24 - Disk Start Number      4 bytes
+
+        break;
+      }
+
+      // validate file size
+      if (self.validateEntrySizes && entry.compressionMethod === 0) {
+        var expectedCompressedSize = entry.uncompressedSize;
+        if (entry.isEncrypted()) {
+          // traditional encryption prefixes the file data with a header
+          expectedCompressedSize += 12;
+        }
+        if (entry.compressedSize !== expectedCompressedSize) {
+          var msg = "compressed/uncompressed size mismatch for stored file: " + entry.compressedSize + " != " + entry.uncompressedSize;
+          return emitErrorAndAutoClose(self, new Error(msg));
+        }
+      }
+
+      self.emit("entry", entry);
+
+      if (!self.lazyEntries) self._readEntry();
+    });
+  });
+};
+
+ZipFile.prototype.eachEntry = function() {
+  const self = this;
+  if (!self.lazyEntries) throw new Error("eachEntry() requires lazyEntries: true");
+  if (self.hasEachEntryBeenCalled) throw new Error("eachEntry() must only be called once per ZipFile");
+  self.hasEachEntryBeenCalled = true;
+
+  let pendingResolveReject = null;
+  self.on("entry", onEntry);
+  self.on("end", onEnd);
+  self.on("error", onError);
+  function cleanup() {
+    self.removeListener("entry", onEntry);
+    self.removeListener("end", onEnd);
+    self.removeListener("error", onError);
+    if (self.autoClose) self.close();
+  }
+
+  function onEntry(entry) {
+    let {resolve} = pendingResolveReject;
+    pendingResolveReject = null;
+    resolve({value: entry});
+  }
+  function onEnd() {
+    let {resolve} = pendingResolveReject;
+    pendingResolveReject = null;
+    cleanup();
+    resolve({done: true});
+  }
+  function onError(err) {
+    let {reject} = pendingResolveReject;
+    pendingResolveReject = null;
+    cleanup();
+    reject(err);
+  }
+
+  return {
+    [Symbol.asyncIterator]() {
+      // Called once by `for await...of`.
+      return this;
+    },
+    next() {
+      // Called on each iteration in a `for await...of`.
+      const promise = new Promise((resolve, reject) => {
+        if (pendingResolveReject != null) throw new Error("next() called before previous Promise was resolved.");
+        pendingResolveReject = {resolve, reject};
+      });
+      self.readEntry();
+      return promise;
+    },
+    return(value) {
+      // Called when breaking, returning, throwing out of a `for await...of`.
+      cleanup();
+      return Promise.resolve({done: true, value});
+    },
+    throw(value) {
+      // Almost never called. Something about `yield*` maybe?
+      cleanup();
+      return Promise.reject(value);
+    },
+  };
+};
+
+ZipFile.prototype.openReadStream = function(entry, options, callback) {
+  var self = this;
+  // parameter validation
+  var relativeStart = 0;
+  var relativeEnd = entry.compressedSize;
+  if (callback == null) {
+    callback = options;
+    options = null;
+  }
+  if (options == null) {
+    options = {};
+  } else {
+    if (options.decodeFileData === false) {
+      // new, simple option
+      if (options.decrypt != null) {
+        throw new Error("cannot use options.decrypt when options.decodeFileData === false");
+      }
+      if (options.decompress != null) {
+        throw new Error("cannot use options.decompress when options.decodeFileData === false");
+      }
+      // start and end are allowed
+    } else {
+      // old, complicated options
+      if (options.decrypt != null) {
+        if (!entry.isEncrypted()) {
+          throw new Error("options.decrypt can only be specified for encrypted entries. See also option decodeFileData.");
+        }
+        if (options.decrypt !== false) throw new Error("invalid options.decrypt value: " + options.decrypt);
+        if (entry.isCompressed()) {
+          if (options.decompress !== false) throw new Error("entry is encrypted and compressed, and options.decompress !== false. See also option decodeFileData.");
+        }
+      }
+      if (options.decompress != null) {
+        if (!entry.isCompressed()) {
+          throw new Error("options.decompress can only be specified for compressed entries. See also option decodeFileData.");
+        }
+        if (!(options.decompress === false || options.decompress === true)) {
+          throw new Error("invalid options.decompress value: " + options.decompress);
+        }
+        decompress = options.decompress;
+      }
+    }
+    if (options.start != null) {
+      relativeStart = options.start;
+      if (relativeStart < 0) throw new Error("options.start < 0");
+      if (relativeStart > entry.compressedSize) throw new Error("options.start > entry.compressedSize");
+    }
+    if (options.end != null) {
+      relativeEnd = options.end;
+      if (relativeEnd < 0) throw new Error("options.end < 0");
+      if (relativeEnd > entry.compressedSize) throw new Error("options.end > entry.compressedSize");
+      if (relativeEnd < relativeStart) throw new Error("options.end < options.start");
+    }
+  }
+  var rawMode = (
+    options.decodeFileData === false || // Explicitly requested raw.
+    (
+      (entry.compressionMethod === 0 || // Naturally without compression.
+        (entry.compressionMethod === 8 && options.decompress === false) // Deprecated compression bypass option.
+      ) &&
+      (!entry.isEncrypted() || // Naturally without encryption.
+        options.decrypt === false // Deprecated encryption bypass option.
+      )
+    )
+  );
+  if (options.start != null || options.end != null) {
+    // Ensure slicing deals with raw data.
+    if (!rawMode) throw new Error("start/end range require options.decodeFileData === false for non-trivial encoded entries.");
+  }
+
+  // any further errors can either be caused by the zipfile,
+  // or were introduced in a minor version of yauzl,
+  // so should be passed to the client rather than thrown.
+  if (!self.isOpen) return callback(new Error("closed"));
+  if (entry.isEncrypted() && !rawMode) {
+    if (options.decrypt !== false) return callback(new Error("entry is encrypted, and options.decodeFileData !== false"));
+  }
+  var decompress;
+  if (rawMode) {
+    decompress = false;
+  } else if (entry.compressionMethod === 8) {
+    // 8 - The file is Deflated
+    decompress = options.decodeFileData !== true;
+  } else {
+    return callback(new Error("unsupported compression method: " + entry.compressionMethod));
+  }
+
+  self.readLocalFileHeader(entry, {minimal: true}, function(err, localFileHeader) {
+    if (err) return callback(err);
+    self.openReadStreamLowLevel(
+      localFileHeader.fileDataStart, entry.compressedSize,
+      relativeStart, relativeEnd,
+      decompress, entry.uncompressedSize,
+      callback);
+  });
+};
+
+ZipFile.prototype.openReadStreamLowLevel = function(fileDataStart, compressedSize, relativeStart, relativeEnd, decompress, uncompressedSize, callback) {
+  var self = this;
+
+  var fileDataEnd = fileDataStart + compressedSize;
+  var readStream = self.reader.createReadStream({
+    start: fileDataStart + relativeStart,
+    end: fileDataStart + relativeEnd,
+  });
+  var endpointStream = readStream;
+  if (decompress) {
+    var destroyed = false;
+    var inflateFilter = zlib.createInflateRaw();
+    readStream.on("error", function(err) {
+      // setImmediate here because errors can be emitted during the first call to pipe()
+      setImmediate(function() {
+        if (!destroyed) inflateFilter.emit("error", err);
+      });
+    });
+    readStream.pipe(inflateFilter);
+
+    if (self.validateEntrySizes) {
+      endpointStream = new AssertByteCountStream(uncompressedSize);
+      inflateFilter.on("error", function(err) {
+        // forward zlib errors to the client-visible stream
+        setImmediate(function() {
+          if (!destroyed) endpointStream.emit("error", err);
+        });
+      });
+      inflateFilter.pipe(endpointStream);
+    } else {
+      // the zlib filter is the client-visible stream
+      endpointStream = inflateFilter;
+    }
+    // this is part of yauzl's API, so implement this function on the client-visible stream
+    installDestroyFn(endpointStream, function() {
+      destroyed = true;
+      if (inflateFilter !== endpointStream) inflateFilter.unpipe(endpointStream);
+      readStream.unpipe(inflateFilter);
+      // TODO: the inflateFilter may cause a memory leak. see Issue #27.
+      readStream.destroy();
+    });
+  }
+  callback(null, endpointStream);
+};
+
+ZipFile.prototype.readLocalFileHeader = function(entry, options, callback) {
+  var self = this;
+  if (callback == null) {
+    callback = options;
+    options = null;
+  }
+  if (options == null) options = {};
+
+  self.reader.ref();
+  var buffer = newBuffer(30);
+  readAndAssertNoEof(self.reader, buffer, 0, buffer.length, entry.relativeOffsetOfLocalHeader, function(err) {
+    try {
+      if (err) return callback(err);
+      // 0 - Local file header signature = 0x04034b50
+      var signature = buffer.readUInt32LE(0);
+      if (signature !== 0x04034b50) {
+        return callback(new Error("invalid local file header signature: 0x" + signature.toString(16)));
+      }
+
+      var fileNameLength = buffer.readUInt16LE(26);
+      var extraFieldLength = buffer.readUInt16LE(28);
+      var fileDataStart = entry.relativeOffsetOfLocalHeader + 30 + fileNameLength + extraFieldLength;
+      // We now have enough information to do this bounds check.
+      if (fileDataStart + entry.compressedSize > self.fileSize) {
+        return callback(new Error("file data overflows file bounds: " +
+            fileDataStart + " + " + entry.compressedSize + " > " + self.fileSize));
+      }
+
+      if (options.minimal) {
+        return callback(null, {fileDataStart: fileDataStart});
+      }
+
+      var localFileHeader = new LocalFileHeader();
+      localFileHeader.fileDataStart = fileDataStart;
+
+      // 4 - Version needed to extract (minimum)
+      localFileHeader.versionNeededToExtract = buffer.readUInt16LE(4);
+      // 6 - General purpose bit flag
+      localFileHeader.generalPurposeBitFlag = buffer.readUInt16LE(6);
+      // 8 - Compression method
+      localFileHeader.compressionMethod = buffer.readUInt16LE(8);
+      // 10 - File last modification time
+      localFileHeader.lastModFileTime = buffer.readUInt16LE(10);
+      // 12 - File last modification date
+      localFileHeader.lastModFileDate = buffer.readUInt16LE(12);
+      // 14 - CRC-32
+      localFileHeader.crc32 = buffer.readUInt32LE(14);
+      // 18 - Compressed size
+      localFileHeader.compressedSize = buffer.readUInt32LE(18);
+      // 22 - Uncompressed size
+      localFileHeader.uncompressedSize = buffer.readUInt32LE(22);
+      // 26 - File name length (n)
+      localFileHeader.fileNameLength = fileNameLength;
+      // 28 - Extra field length (m)
+      localFileHeader.extraFieldLength = extraFieldLength;
+      // 30 - File name
+      // 30+n - Extra field
+
+      buffer = newBuffer(fileNameLength + extraFieldLength);
+      self.reader.ref();
+      readAndAssertNoEof(self.reader, buffer, 0, buffer.length, entry.relativeOffsetOfLocalHeader + 30, function(err) {
+        try {
+          if (err) return callback(err);
+          localFileHeader.fileName = buffer.subarray(0, fileNameLength);
+          localFileHeader.extraField = buffer.subarray(fileNameLength);
+          return callback(null, localFileHeader);
+        } finally {
+          self.reader.unref();
+        }
+      });
+    } finally {
+      self.reader.unref();
+    }
+  });
+};
+
+ZipFile.prototype.openReadStreamPromise = function(entry, options) {
+  return new Promise((resolve, reject) => {
+    this.openReadStream(entry, options, function(err, readStream) {
+      if (err) return reject(err);
+      resolve(readStream);
+    });
+  });
+};
+ZipFile.prototype.openReadStreamLowLevelPromise = function(fileDataStart, compressedSize, relativeStart, relativeEnd, decompress, uncompressedSize) {
+  return new Promise((resolve, reject) => {
+    this.openReadStream(fileDataStart, compressedSize, relativeStart, relativeEnd, decompress, uncompressedSize, function(err, readStream) {
+      if (err) return reject(err);
+      resolve(readStream);
+    });
+  });
+};
+ZipFile.prototype.readLocalFileHeaderPromise = function(entry, options) {
+  return new Promise((resolve, reject) => {
+    this.readLocalFileHeader(entry, options, function(err, localFileHeader) {
+      if (err) return reject(err);
+      resolve(localFileHeader);
+    });
+  });
+};
+
+function Entry() {
+}
+Entry.prototype.getLastModDate = function(options) {
+  if (options == null) options = {};
+
+  if (!options.forceDosFormat) {
+    // Check extended fields.
+    for (var i = 0; i < this.extraFields.length; i++) {
+      var extraField = this.extraFields[i];
+      if (extraField.id === 0x5455) {
+        // Info-ZIP "universal timestamp" extended field (`0x5455` aka `"UT"`).
+        // See the Info-ZIP source code unix/unix.c:set_extra_field() and zipfile.c:ef_scan_ut_time().
+        var data = extraField.data;
+        if (data.length < 5) continue; // Too short.
+        // The flags define which of the three fields are present: mtime, atime, ctime.
+        // We only care about mtime.
+        // Also, ctime is never included in practice.
+        // And also, atime is only included in the local file header for some reason
+        // despite the flags lying about its inclusion in the central header.
+        var flags = data[0];
+        var HAS_MTIME = 1;
+        if (!(flags & HAS_MTIME)) continue; // This will realistically never happen.
+        // Although the positions of all of the fields shift around depending on the presence of other fields,
+        // mtime is always first if present, and that's the only one we care about.
+        var posixTimestamp = data.readInt32LE(1);
+        return new Date(posixTimestamp * 1000);
+      } else if (extraField.id === 0x000a) {
+        var data = extraField.data;
+        if (data.length !== 32) continue; // The length is always the same.
+        // 4 bytes reserved
+        // 2 bytes Tag
+        if (data.readUInt16LE(4) !== 1) continue; // Tag1 is actually the only defined Tag.
+        // 2 bytes Size
+        if (data.readUInt16LE(6) !== 24) continue; // Size is always 24.
+        // 8 bytes Mtime
+        var hundredNanoSecondsSince1601 = data.readUInt32LE(8) + 4294967296 * data.readInt32LE(12);
+        // Convert from NTFS to POSIX milliseconds.
+        // The big number below is the milliseconds between year 1601 and year 1970
+        // (i.e. the negative POSIX timestamp of 1601-01-01 00:00:00Z)
+        var millisecondsSince1970 = hundredNanoSecondsSince1601 / 10000 - 11644473600000;
+        // Note on numeric precision: JavaScript Number objects lose precision above Number.MAX_SAFE_INTEGER,
+        // and NTFS timestamps are typically much bigger than that limit.
+        // (MAX_SAFE_INTEGER would represent 1629-07-17T23:58:45.475Z.)
+        // However, we're losing precision in the conversion from 100nanosecond units to millisecond units anyway,
+        // and the time at which we also lose 1-millisecond precision is year 275760, the JavaScript Date limit (by design).
+        // Up through the year 2057, this conversion only drops 4 bits of precision,
+        // which is well under the 13-14 bits ratio between the milliseconds and 100nanoseconds.
+        return new Date(millisecondsSince1970);
+      }
+    }
+  }
+
+  // Fallback to non-extended encoding.
+  return dosDateTimeToDate(this.lastModFileDate, this.lastModFileTime, options.timezone);
+};
+
+Entry.prototype.canDecodeFileData = function() {
+  return (
+    !this.isEncrypted() &&
+    (this.compressionMethod === 0 || this.compressionMethod === 8)
+  );
+};
+Entry.prototype.isEncrypted = function() {
+  return (this.generalPurposeBitFlag & 0x1) !== 0;
+};
+Entry.prototype.isCompressed = function() {
+  return this.compressionMethod === 8;
+};
+
+function LocalFileHeader() {
+}
+
+function dosDateTimeToDate(date, time, timezone) {
+  var day = date & 0x1f; // 1-31
+  var month = (date >> 5 & 0xf) - 1; // 1-12, 0-11
+  var year = (date >> 9 & 0x7f) + 1980; // 0-128, 1980-2108
+
+  var millisecond = 0;
+  var second = (time & 0x1f) * 2; // 0-29, 0-58 (even numbers)
+  var minute = time >> 5 & 0x3f; // 0-59
+  var hour = time >> 11 & 0x1f; // 0-23
+
+  if (timezone == null || timezone === "local") {
+    return new Date(year, month, day, hour, minute, second, millisecond);
+  } else if (timezone === "UTC") {
+    return new Date(Date.UTC(year, month, day, hour, minute, second, millisecond));
+  } else {
+    throw new Error("unrecognized options.timezone: " + options.timezone);
+  }
+}
+
+function getFileNameLowLevel(generalPurposeBitFlag, fileNameBuffer, extraFields, strictFileNames) {
+  var fileName = null;
+
+  // check for Info-ZIP Unicode Path Extra Field (0x7075)
+  // see https://github.com/thejoshwolfe/yauzl/issues/33
+  for (var i = 0; i < extraFields.length; i++) {
+    var extraField = extraFields[i];
+    if (extraField.id === 0x7075) {
+      if (extraField.data.length < 6) {
+        // too short to be meaningful
+        continue;
+      }
+      // Version       1 byte      version of this extra field, currently 1
+      if (extraField.data.readUInt8(0) !== 1) {
+        // > Changes may not be backward compatible so this extra
+        // > field should not be used if the version is not recognized.
+        continue;
+      }
+      // NameCRC32     4 bytes     File Name Field CRC32 Checksum
+      var oldNameCrc32 = extraField.data.readUInt32LE(1);
+      if (crc32(fileNameBuffer) !== oldNameCrc32) {
+        // > If the CRC check fails, this UTF-8 Path Extra Field should be
+        // > ignored and the File Name field in the header should be used instead.
+        continue;
+      }
+      // UnicodeName   Variable    UTF-8 version of the entry File Name
+      fileName = decodeBuffer(extraField.data.subarray(5), true);
+      break;
+    }
+  }
+
+  if (fileName == null) {
+    // The typical case.
+    var isUtf8 = (generalPurposeBitFlag & 0x800) !== 0;
+    fileName = decodeBuffer(fileNameBuffer, isUtf8);
+  }
+
+  if (!strictFileNames) {
+    // Allow backslash.
+    fileName = fileName.replace(/\\/g, "/");
+  }
+  return fileName;
+}
+
+function validateFileName(fileName) {
+  if (fileName.indexOf("\\") !== -1) {
+    return "invalid characters in fileName: " + fileName;
+  }
+  if (/^[a-zA-Z]:/.test(fileName) || /^\//.test(fileName)) {
+    return "absolute path: " + fileName;
+  }
+  if (fileName.split("/").indexOf("..") !== -1) {
+    return "invalid relative path: " + fileName;
+  }
+  // all good
+  return null;
+}
+
+function parseExtraFields(extraFieldBuffer) {
+  var extraFields = [];
+  var i = 0;
+  while (i < extraFieldBuffer.length - 3) {
+    var headerId = extraFieldBuffer.readUInt16LE(i + 0);
+    var dataSize = extraFieldBuffer.readUInt16LE(i + 2);
+    var dataStart = i + 4;
+    var dataEnd = dataStart + dataSize;
+    if (dataEnd > extraFieldBuffer.length) throw new Error("extra field length exceeds extra field buffer size");
+    var dataBuffer = extraFieldBuffer.subarray(dataStart, dataEnd);
+    extraFields.push({
+      id: headerId,
+      data: dataBuffer,
+    });
+    i = dataEnd;
+  }
+  return extraFields;
+}
+
+function readAndAssertNoEof(reader, buffer, offset, length, position, callback) {
+  if (length === 0) {
+    // fs.read will throw an out-of-bounds error if you try to read 0 bytes from a 0 byte file
+    return setImmediate(function() { callback(null, newBuffer(0)); });
+  }
+  reader.read(buffer, offset, length, position, function(err, bytesRead) {
+    if (err) return callback(err);
+    if (bytesRead < length) {
+      return callback(new Error("unexpected EOF"));
+    }
+    callback();
+  });
+}
+
+util.inherits(AssertByteCountStream, Transform);
+function AssertByteCountStream(byteCount) {
+  Transform.call(this);
+  this.actualByteCount = 0;
+  this.expectedByteCount = byteCount;
+}
+AssertByteCountStream.prototype._transform = function(chunk, encoding, cb) {
+  this.actualByteCount += chunk.length;
+  if (this.actualByteCount > this.expectedByteCount) {
+    var msg = "too many bytes in the stream. expected " + this.expectedByteCount + ". got at least " + this.actualByteCount;
+    return cb(new Error(msg));
+  }
+  cb(null, chunk);
+};
+AssertByteCountStream.prototype._flush = function(cb) {
+  if (this.actualByteCount < this.expectedByteCount) {
+    var msg = "not enough bytes in the stream. expected " + this.expectedByteCount + ". got only " + this.actualByteCount;
+    return cb(new Error(msg));
+  }
+  cb();
+};
+
+util.inherits(RandomAccessReader, EventEmitter);
+function RandomAccessReader() {
+  EventEmitter.call(this);
+  this.refCount = 0;
+}
+RandomAccessReader.prototype.ref = function() {
+  this.refCount += 1;
+};
+RandomAccessReader.prototype.unref = function() {
+  var self = this;
+  self.refCount -= 1;
+
+  if (self.refCount > 0) return;
+  if (self.refCount < 0) throw new Error("invalid unref");
+
+  self.close(onCloseDone);
+
+  function onCloseDone(err) {
+    if (err) return self.emit('error', err);
+    self.emit('close');
+  }
+};
+RandomAccessReader.prototype.createReadStream = function(options) {
+  if (options == null) options = {};
+  var start = options.start;
+  var end = options.end;
+  if (start === end) {
+    var emptyStream = new PassThrough();
+    setImmediate(function() {
+      emptyStream.end();
+    });
+    return emptyStream;
+  }
+  var stream = this._readStreamForRange(start, end);
+
+  var destroyed = false;
+  var refUnrefFilter = new RefUnrefFilter(this);
+  stream.on("error", function(err) {
+    setImmediate(function() {
+      if (!destroyed) refUnrefFilter.emit("error", err);
+    });
+  });
+  installDestroyFn(refUnrefFilter, function() {
+    stream.unpipe(refUnrefFilter);
+    refUnrefFilter.unref();
+    stream.destroy();
+  });
+
+  var byteCounter = new AssertByteCountStream(end - start);
+  refUnrefFilter.on("error", function(err) {
+    setImmediate(function() {
+      if (!destroyed) byteCounter.emit("error", err);
+    });
+  });
+  installDestroyFn(byteCounter, function() {
+    destroyed = true;
+    refUnrefFilter.unpipe(byteCounter);
+    refUnrefFilter.destroy();
+  });
+
+  return stream.pipe(refUnrefFilter).pipe(byteCounter);
+};
+RandomAccessReader.prototype._readStreamForRange = function(start, end) {
+  throw new Error("not implemented");
+};
+RandomAccessReader.prototype.read = function(buffer, offset, length, position, callback) {
+  var readStream = this.createReadStream({start: position, end: position + length});
+  var writeStream = new Writable();
+  var written = 0;
+  writeStream._write = function(chunk, encoding, cb) {
+    chunk.copy(buffer, offset + written, 0, chunk.length);
+    written += chunk.length;
+    cb();
+  };
+  writeStream.on("finish", callback);
+  readStream.on("error", function(error) {
+    callback(error);
+  });
+  readStream.pipe(writeStream);
+};
+RandomAccessReader.prototype.close = function(callback) {
+  setImmediate(callback);
+};
+
+util.inherits(RefUnrefFilter, PassThrough);
+function RefUnrefFilter(context) {
+  PassThrough.call(this);
+  this.context = context;
+  this.context.ref();
+  this.unreffedYet = false;
+}
+RefUnrefFilter.prototype._flush = function(cb) {
+  this.unref();
+  cb();
+};
+RefUnrefFilter.prototype.unref = function(cb) {
+  if (this.unreffedYet) return;
+  this.unreffedYet = true;
+  this.context.unref();
+};
+
+var cp437 = '\u0000☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼ !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~⌂ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ';
+function decodeBuffer(buffer, isUtf8) {
+  if (isUtf8) {
+    return buffer.toString("utf8");
+  } else {
+    var result = "";
+    for (var i = 0; i < buffer.length; i++) {
+      result += cp437[buffer[i]];
+    }
+    return result;
+  }
+}
+
+function readUInt64LE(buffer, offset) {
+  // There is no native function for this, because we can't actually store 64-bit integers precisely.
+  // after 53 bits, JavaScript's Number type (IEEE 754 double) can't store individual integers anymore.
+  // but since 53 bits is a whole lot more than 32 bits, we do our best anyway.
+  // As of 2020, Node has added support for BigInt, which obviates this whole function,
+  // but yauzl hasn't been updated to depend on BigInt (yet?).
+  var lower32 = buffer.readUInt32LE(offset);
+  var upper32 = buffer.readUInt32LE(offset + 4);
+  // we can't use bitshifting here, because JavaScript bitshifting only works on 32-bit integers.
+  return upper32 * 0x100000000 + lower32;
+  // as long as we're bounds checking the result of this function against the total file size,
+  // we'll catch any overflow errors, because we already made sure the total file size was within reason.
+}
+
+// Node 10 deprecated new Buffer().
+var newBuffer;
+if (typeof Buffer.allocUnsafe === "function") {
+  newBuffer = function(len) {
+    return Buffer.allocUnsafe(len);
+  };
+} else {
+  newBuffer = function(len) {
+    return new Buffer(len);
+  };
+}
+
+// Node 8 introduced a proper destroy() implementation on writable streams.
+function installDestroyFn(stream, fn) {
+  if (typeof stream.destroy === "function") {
+    // New API.
+    stream._destroy = function(err, cb) {
+      fn();
+      if (cb != null) cb(err);
+    };
+  } else {
+    // Old API.
+    stream.destroy = fn;
+  }
+}
+
+function defaultCallback(err) {
+  if (err) throw err;
+}
+
+
+/***/ }),
+
 /***/ 86454:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -131393,7 +133460,7 @@ module.exports = index;
 /***/ ((module) => {
 
 "use strict";
-module.exports = JSON.parse('{"name":"@actions/artifact","version":"2.1.8","preview":true,"description":"Actions artifact lib","keywords":["github","actions","artifact"],"homepage":"https://github.com/actions/toolkit/tree/main/packages/artifact","license":"MIT","main":"lib/artifact.js","types":"lib/artifact.d.ts","directories":{"lib":"lib","test":"__tests__"},"files":["lib","!.DS_Store"],"publishConfig":{"access":"public"},"repository":{"type":"git","url":"git+https://github.com/actions/toolkit.git","directory":"packages/artifact"},"scripts":{"audit-moderate":"npm install && npm audit --json --audit-level=moderate > audit.json","test":"cd ../../ && npm run test ./packages/artifact","bootstrap":"cd ../../ && npm run bootstrap","tsc-run":"tsc","tsc":"npm run bootstrap && npm run tsc-run","gen:docs":"typedoc --plugin typedoc-plugin-markdown --out docs/generated src/artifact.ts --githubPages false --readme none"},"bugs":{"url":"https://github.com/actions/toolkit/issues"},"dependencies":{"@actions/core":"^1.10.0","@actions/github":"^5.1.1","@actions/http-client":"^2.1.0","@azure/storage-blob":"^12.15.0","@octokit/core":"^3.5.1","@octokit/plugin-request-log":"^1.0.4","@octokit/plugin-retry":"^3.0.9","@octokit/request-error":"^5.0.0","@protobuf-ts/plugin":"^2.2.3-alpha.1","archiver":"^7.0.1","crypto":"^1.0.1","jwt-decode":"^3.1.2","twirp-ts":"^2.5.0","unzip-stream":"^0.3.1"},"devDependencies":{"@types/archiver":"^5.3.2","@types/unzip-stream":"^0.3.4","typedoc":"^0.25.4","typedoc-plugin-markdown":"^3.17.1","typescript":"^5.2.2"}}');
+module.exports = JSON.parse('{"name":"@actions/artifact","version":"2.1.8","preview":true,"description":"Actions artifact lib","keywords":["github","actions","artifact"],"homepage":"https://github.com/actions/toolkit/tree/main/packages/artifact","license":"MIT","main":"lib/artifact.js","types":"lib/artifact.d.ts","directories":{"lib":"lib","test":"__tests__"},"files":["lib","!.DS_Store"],"publishConfig":{"access":"public"},"repository":{"type":"git","url":"git+https://github.com/actions/toolkit.git","directory":"packages/artifact"},"scripts":{"audit-moderate":"npm install && npm audit --json --audit-level=moderate > audit.json","test":"cd ../../ && npm run test ./packages/artifact","bootstrap":"cd ../../ && npm run bootstrap","tsc-run":"tsc","tsc":"npm run bootstrap && npm run tsc-run","gen:docs":"typedoc --plugin typedoc-plugin-markdown --out docs/generated src/artifact.ts --githubPages false --readme none"},"bugs":{"url":"https://github.com/actions/toolkit/issues"},"dependencies":{"@actions/core":"^1.10.0","@actions/github":"^5.1.1","@actions/http-client":"^2.1.0","@azure/storage-blob":"^12.15.0","@octokit/core":"^3.5.1","@octokit/plugin-request-log":"^1.0.4","@octokit/plugin-retry":"^3.0.9","@octokit/request-error":"^5.0.0","@protobuf-ts/plugin":"^2.2.3-alpha.1","archiver":"^7.0.1","crypto":"^1.0.1","jwt-decode":"^3.1.2","twirp-ts":"^2.5.0","unzip-stream":"^0.3.1","yauzl":"^3.4.0"},"devDependencies":{"@types/archiver":"^5.3.2","@types/unzip-stream":"^0.3.4","@types/yauzl":"^3.4.0","typedoc":"^0.25.4","typedoc-plugin-markdown":"^3.17.1","typescript":"^5.2.2"}}');
 
 /***/ }),
 
